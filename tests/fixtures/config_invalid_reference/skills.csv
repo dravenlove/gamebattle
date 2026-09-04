@@ -1,0 +1,2 @@
+id,name,chance_bp,priority,effect_ids,notes
+501,错误技能,3500,10,999999,引用不存在的效果

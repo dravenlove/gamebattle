@@ -1,0 +1,9 @@
+{application, gamebattle,
+ [{description, "C++20 deterministic battle engine adapters"},
+  {vsn, "0.1.0"},
+  {registered, [gamebattle_port]},
+  {mod, {gamebattle_app, []}},
+  {applications, [kernel, stdlib]},
+  {env, [{port_timeout, 30000}]},
+  {modules, []}
+ ]}.

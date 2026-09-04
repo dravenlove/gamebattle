@@ -1,0 +1,208 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "clion-runtime-debug",
+      "displayName": "CLion | Battle Runtime | Debug",
+      "description": "Debug battle core, Port and core tests without building the config compiler.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/clion-runtime-debug",
+      "cacheVariables": {
+        "GAMEBATTLE_BUILD_TESTS": "ON",
+        "GAMEBATTLE_BUILD_NIF": "OFF",
+        "GAMEBATTLE_BUILD_CONFIG_COMPILER": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "clion-config-compiler-debug",
+      "displayName": "CLion | Config Compiler | Debug",
+      "description": "Debug only the optional CSV-to-GBCF compiler target.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/clion-config-compiler-debug",
+      "cacheVariables": {
+        "GAMEBATTLE_BUILD_TESTS": "OFF",
+        "GAMEBATTLE_BUILD_NIF": "OFF",
+        "GAMEBATTLE_BUILD_CONFIG_COMPILER": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-runtime-debug",
+      "displayName": "Linux | Battle Runtime | Debug",
+      "description": "Debug the battle core and Port on a Linux development host.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/out/build/linux-runtime-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GAMEBATTLE_BUILD_TESTS": "ON",
+        "GAMEBATTLE_BUILD_NIF": "OFF",
+        "GAMEBATTLE_BUILD_CONFIG_COMPILER": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-runtime-release",
+      "displayName": "Linux | Battle Runtime | Release",
+      "description": "Build the production Erlang Port without tests, NIF or config compiler.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/out/build/linux-runtime-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GAMEBATTLE_BUILD_TESTS": "OFF",
+        "GAMEBATTLE_BUILD_NIF": "OFF",
+        "GAMEBATTLE_BUILD_CONFIG_COMPILER": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-runtime-release-nif",
+      "displayName": "Linux | Battle Runtime + NIF | Release",
+      "description": "Build the production Erlang Port and NIF. ERLANG_ERTS_INCLUDE_DIR must contain erl_nif.h.",
+      "inherits": "linux-runtime-release",
+      "binaryDir": "${sourceDir}/out/build/linux-runtime-release-nif",
+      "cacheVariables": {
+        "GAMEBATTLE_BUILD_NIF": "ON",
+        "ERLANG_ERTS_INCLUDE_DIR": "$env{ERLANG_ERTS_INCLUDE_DIR}"
+      }
+    },
+    {
+      "name": "linux-config-compiler-release",
+      "displayName": "Linux | Config Compiler | Release",
+      "description": "Build only the optional CSV-to-GBCF compiler for Linux.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/out/build/linux-config-compiler-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GAMEBATTLE_BUILD_TESTS": "OFF",
+        "GAMEBATTLE_BUILD_NIF": "OFF",
+        "GAMEBATTLE_BUILD_CONFIG_COMPILER": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-runtime-debug",
+      "displayName": "Build | Battle Tests | Debug",
+      "configurePreset": "clion-runtime-debug",
+      "configuration": "Debug",
+      "targets": [
+        "gamebattle_tests"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "build-port-debug",
+      "displayName": "Build | Erlang Port | Debug",
+      "configurePreset": "clion-runtime-debug",
+      "configuration": "Debug",
+      "targets": [
+        "gamebattle_port"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "build-config-compiler-debug",
+      "displayName": "Build | Config Compiler | Debug",
+      "configurePreset": "clion-config-compiler-debug",
+      "configuration": "Debug",
+      "targets": [
+        "gamebattle_config_compiler"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "build-linux-runtime-debug",
+      "displayName": "Build | Linux Battle Tests | Debug",
+      "configurePreset": "linux-runtime-debug",
+      "targets": [
+        "gamebattle_tests"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "build-linux-runtime-release",
+      "displayName": "Build | Linux Erlang Port | Release",
+      "configurePreset": "linux-runtime-release",
+      "targets": [
+        "gamebattle_port"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "build-linux-runtime-release-nif",
+      "displayName": "Build | Linux Port + NIF | Release",
+      "configurePreset": "linux-runtime-release-nif",
+      "targets": [
+        "gamebattle_port",
+        "gamebattle_nif"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "build-linux-config-compiler-release",
+      "displayName": "Build | Linux Config Compiler | Release",
+      "configurePreset": "linux-config-compiler-release",
+      "targets": [
+        "gamebattle_config_compiler"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    }
+  ]
+}

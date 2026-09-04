@@ -1,0 +1,2 @@
+id,type,target,target_count,attack_bp,flat,buff_id,remove_buff_id,notes
+9001,damage,all_enemies,256,11500,20,0,0,测试伤害

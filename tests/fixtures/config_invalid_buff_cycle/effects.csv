@@ -1,0 +1,2 @@
+id,type,target,target_count,attack_bp,flat,buff_id,remove_buff_id,notes
+9001,add_buff,self,1,0,0,801,0,形成801到801的自循环

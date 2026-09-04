@@ -1,0 +1,4 @@
+id,name,trigger,chance_bp,max_triggers_per_round,effect_ids,notes
+701,淬毒,on_hit,4000,1,9002,命中后施加中毒
+702,鼓舞,battle_start,10000,0,9003,开场强化全队
+703,反击,on_damaged,2500,1,9004,受击后概率反击

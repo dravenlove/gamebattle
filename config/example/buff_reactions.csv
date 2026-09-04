@@ -1,0 +1,2 @@
+buff_id,sequence,trigger,source,stack_scaling,chance_bp,max_triggers_per_round,effect_ids,notes
+801,1,round_end,applier,per_stack,10000,0,9005,由施加者作为效果来源并对Buff持有者结算

@@ -1,0 +1,2 @@
+id,name,chance_bp,priority,effect_ids,notes
+501,烈焰斩,3500,10,9001,"群体攻击技能,同时验证带逗号的 CSV 单元格"

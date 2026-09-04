@@ -1,0 +1,2 @@
+buff_id,sequence,attribute,operation,value,notes
+802,1,attack,add,25,每层增加25点攻击
