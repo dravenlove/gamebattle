@@ -31,8 +31,11 @@ BattleResult BattleRunner::run() {
                 ? Side::attacker
                 : Side::defender;
     }
+    const auto initiative_context = state_.make_event_context(
+        Trigger::battle_start, 0, 0, 0, 0);
     state_.emit(
-        "battle", "initiative", state_.first_side, 0, 0, 0,
+        initiative_context, "battle", "initiative", state_.first_side,
+        0, 0, 0,
         static_cast<std::int64_t>(
             state_.first_side == Side::attacker
                 ? state_.result.attacker_initiative
@@ -45,16 +48,25 @@ BattleResult BattleRunner::run() {
     }
 
     effects_.trigger_all(Trigger::battle_start, std::nullopt);
+    if (state_.execution_limit) {
+        state_.result.winner = Winner::draw;
+        state_.result.reason = "execution_limit";
+        state_.result.rounds = 0;
+        return state_.finish();
+    }
     if (state_.finish_if_decided("battle_start")) {
         return state_.finish();
     }
 
     for (state_.round = 1;
-         state_.round <= state_.request.max_rounds && !state_.event_limit;
+         state_.round <= state_.request.max_rounds && !state_.execution_limit;
          ++state_.round) {
         state_.reset_round_trigger_counts();
         state_.phase = "round_start";
         effects_.trigger_all(Trigger::round_start, std::nullopt);
+        if (state_.execution_limit) {
+            break;
+        }
         if (state_.finish_if_decided("round_start")) {
             break;
         }
@@ -62,7 +74,7 @@ BattleResult BattleRunner::run() {
         const std::array<Side, 2> order{
             state_.first_side, other(state_.first_side)};
         for (const Side side : order) {
-            if (state_.side_defeated(side) || state_.event_limit) {
+            if (state_.side_defeated(side) || state_.execution_limit) {
                 continue;
             }
             state_.phase =
@@ -72,12 +84,15 @@ BattleResult BattleRunner::run() {
                 break;
             }
         }
-        if (state_.decided || state_.event_limit) {
+        if (state_.decided || state_.execution_limit) {
             break;
         }
 
         state_.phase = "round_end";
         effects_.trigger_all(Trigger::round_end, std::nullopt);
+        if (state_.execution_limit) {
+            break;
+        }
         if (state_.finish_if_decided("round_end")) {
             break;
         }
@@ -86,7 +101,7 @@ BattleResult BattleRunner::run() {
     if (!state_.decided) {
         state_.result.winner = Winner::draw;
         state_.result.reason =
-            state_.event_limit ? "event_limit" : "max_rounds";
+            state_.execution_limit ? "execution_limit" : "max_rounds";
         state_.result.rounds =
             std::min(state_.round, state_.request.max_rounds);
     }
@@ -98,7 +113,7 @@ void BattleRunner::take_side_turn(Side side) {
     // turns without mutating the action list currently being traversed.
     const auto order = state_.acting_order(side);
     for (const auto actor_index : order) {
-        if (state_.event_limit || state_.side_defeated(other(side))) {
+        if (state_.execution_limit || state_.side_defeated(other(side))) {
             return;
         }
         auto& actor = state_.units[actor_index];
@@ -108,18 +123,31 @@ void BattleRunner::take_side_turn(Side side) {
 
         effects_.trigger_owner(actor_index, Trigger::before_action,
                                actor_index, 0);
+        if (state_.execution_limit) {
+            return;
+        }
         if (!actor.alive()) {
             continue;
         }
 
-        state_.emit(state_.phase, "action_start", side,
+        const auto action_start_context = state_.make_event_context(
+            Trigger::on_attack, actor.config.id, 0, actor.config.id, 0);
+        state_.emit(action_start_context, state_.phase, "action_start", side,
                     actor.config.id, 0, 0, 0);
         effects_.execute_action(actor_index);
+        if (state_.execution_limit) {
+            return;
+        }
         if (actor.alive()) {
             effects_.trigger_owner(actor_index, Trigger::after_action,
                                    actor_index, 0);
         }
-        state_.emit(state_.phase, "action_end", side,
+        if (state_.execution_limit) {
+            return;
+        }
+        const auto action_end_context = state_.make_event_context(
+            Trigger::after_action, actor.config.id, 0, actor.config.id, 0);
+        state_.emit(action_end_context, state_.phase, "action_end", side,
                     actor.config.id, 0, 0, 0);
     }
 }

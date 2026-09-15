@@ -1,0 +1,89 @@
+name: C++20 and Erlang CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Erlang
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes erlang-base erlang-dev erlang-tools
+
+      - name: Configure C++20 runtime, NIF, tests, and config compiler
+        shell: bash
+        run: |
+          ERTS_INCLUDE="$(erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)]), halt().')"
+          cmake -S . -B out/build/linux-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGAMEBATTLE_BUILD_TESTS=ON \
+            -DGAMEBATTLE_BUILD_CONFIG_COMPILER=ON \
+            -DGAMEBATTLE_BUILD_NIF=ON \
+            -DERLANG_ERTS_INCLUDE_DIR="$ERTS_INCLUDE"
+
+      - name: Build
+        run: cmake --build out/build/linux-ci --parallel 2
+
+      - name: Run C++ and config tests
+        run: ctest --test-dir out/build/linux-ci --output-on-failure
+
+      - name: Compile Erlang modules
+        shell: bash
+        run: |
+          mkdir -p out/build/linux-ci-erlang/ebin out/build/linux-ci-erlang/priv
+          erlc -Wall -o out/build/linux-ci-erlang/ebin erlang/src/*.erl
+          cp out/build/linux-ci/gamebattle_nif.so \
+            out/build/linux-ci-erlang/priv/gamebattle_nif.so
+
+      - name: Smoke test Erlang Port
+        shell: bash
+        run: |
+          PORT_EXE="$GITHUB_WORKSPACE/out/build/linux-ci/gamebattle_port"
+          BEAM_DIR="$GITHUB_WORKSPACE/out/build/linux-ci-erlang/ebin"
+          erl -noshell -pa "$BEAM_DIR" -eval '
+            Port = open_port(
+              {spawn_executable, os:getenv("PORT_EXE")},
+              [{packet, 4}, binary, exit_status]
+            ),
+            Request0 = gamebattle:example_request(),
+            Request = Request0#{log_level => result_only,
+                                max_logged_events => 0},
+            Port ! {self(), {command, term_to_binary(Request)}},
+            receive
+              {Port, {data, Bin}} ->
+                {ok, Result} = binary_to_term(Bin),
+                [] = maps:get(events, Result),
+                true = maps:get(execution_steps, Result) > 0,
+                false = maps:get(events_truncated, Result)
+            after 10000 ->
+                erlang:error(port_timeout)
+            end,
+            port_close(Port),
+            halt().'
+        env:
+          PORT_EXE: ${{ github.workspace }}/out/build/linux-ci/gamebattle_port
+
+      - name: Smoke test Erlang NIF
+        shell: bash
+        run: |
+          BEAM_DIR="$GITHUB_WORKSPACE/out/build/linux-ci-erlang/ebin"
+          erl -noshell -pa "$BEAM_DIR" -eval '
+            Request0 = gamebattle:example_request(),
+            Request = Request0#{log_level => result_only,
+                                max_logged_events => 0},
+            {ok, Result} = gamebattle_nif:simulate(Request),
+            [] = maps:get(events, Result),
+            true = maps:get(execution_steps, Result) > 0,
+            false = maps:get(events_truncated, Result),
+            halt().'

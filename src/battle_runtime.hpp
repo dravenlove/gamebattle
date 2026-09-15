@@ -8,12 +8,13 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace gamebattle::runtime {
 
 inline constexpr std::int64_t kBasisPoints = 10000;
-inline constexpr std::size_t kMaxTriggerDepth = 32;
+inline constexpr std::size_t kMaxDefinitionDepth = 32;
 inline constexpr std::size_t kTriggerCount =
     static_cast<std::size_t>(Trigger::round_end) + 1;
 
@@ -50,6 +51,7 @@ struct RuntimeUnit {
     std::array<std::vector<std::size_t>, kTriggerCount> passives_by_trigger;
     Stats cached_stats;
     bool stats_dirty{true};
+    bool death_notified{false};
 
     bool alive() const { return hp > 0; }
 };
@@ -68,7 +70,14 @@ public:
     bool side_defeated(Side side) const;
     bool finish_if_decided(std::string reason);
     void reset_round_trigger_counts();
-    void emit(std::string phase, std::string type, Side side, UnitId actor, UnitId target,
+    bool consume_execution_step();
+    CombatEventContext make_event_context(
+        Trigger trigger, UnitId source = 0, UnitId target = 0,
+        UnitId subject = 0, std::uint32_t source_id = 0,
+        std::uint64_t parent_event_id = 0, std::uint32_t depth = 0);
+    void emit(const CombatEventContext& context,
+              std::string phase, std::string type, Side side,
+              UnitId actor, UnitId target,
               std::uint32_t source_id, std::int64_t value,
               std::int64_t hp_before = 0, std::int64_t hp_after = 0,
               bool critical = false);
@@ -83,8 +92,9 @@ public:
     std::int32_t round{0};
     std::string phase{"battle"};
     bool decided{false};
-    bool event_limit{false};
+    bool execution_limit{false};
     std::uint64_t next_buff_instance_id{1};
+    std::uint64_t next_event_id{1};
 
 private:
     void add_formation(const Formation& formation, Side side);
@@ -104,8 +114,8 @@ public:
         std::optional<std::size_t> trigger_unit);
 };
 
-// Executes declarative skills, passives and buffs. It owns rule recursion but
-// not the round/side schedule.
+// Executes declarative skills, passives and buffs through an explicit LIFO
+// work queue. It owns effect/reaction ordering but not the round/side schedule.
 class EffectSystem {
 public:
     explicit EffectSystem(BattleState& state);
@@ -118,28 +128,127 @@ public:
                      std::uint32_t source_id = 0, std::size_t depth = 0);
 
 private:
-    void execute_effects(std::size_t source_index,
-                         std::size_t selection_owner_index,
-                         const std::vector<Effect>& effects,
-                         std::uint32_t source_id, std::size_t depth,
-                         std::optional<std::size_t> trigger_unit,
-                         std::int32_t magnitude_stacks = 1);
+    struct ActionWork {
+        std::size_t actor_index{0};
+    };
+    struct EffectWork {
+        std::size_t source_index{0};
+        std::size_t selection_owner_index{0};
+        Effect effect;
+        std::uint32_t source_id{0};
+        std::optional<std::size_t> trigger_unit;
+        std::int32_t magnitude_stacks{1};
+    };
+    struct ResolvedEffectWork {
+        std::size_t source_index{0};
+        std::size_t target_index{0};
+        Effect effect;
+        std::uint32_t source_id{0};
+    };
+    struct TriggerOwnerWork {
+        std::size_t owner_index{0};
+        Trigger trigger{Trigger::battle_start};
+        std::optional<std::size_t> event_unit;
+        std::uint32_t source_id{0};
+        std::uint64_t buff_instance_cutoff{0};
+        bool allow_dead_owner{false};
+    };
+    struct TriggerAllWork {
+        Trigger trigger{Trigger::battle_start};
+        std::optional<std::size_t> event_unit;
+        std::uint32_t source_id{0};
+        std::uint64_t buff_instance_cutoff{0};
+    };
+    enum class ReactionKind : std::uint8_t { passive = 0, buff = 1 };
+    struct ReactionWork {
+        ReactionKind kind{ReactionKind::passive};
+        std::size_t owner_index{0};
+        std::size_t config_index{0};
+        std::uint64_t buff_instance_id{0};
+        std::optional<std::size_t> event_unit;
+        std::uint32_t source_id{0};
+        bool allow_dead_owner{false};
+    };
+    struct LifetimeWork {
+        std::size_t owner_index{0};
+        Trigger trigger{Trigger::round_end};
+        std::uint64_t buff_instance_cutoff{0};
+        bool allow_dead_owner{false};
+    };
+    struct DecrementBuffWork {
+        std::size_t owner_index{0};
+        std::uint64_t buff_instance_id{0};
+        Trigger trigger{Trigger::round_end};
+    };
+    struct DeathCheckWork {
+        std::size_t actor_index{0};
+        std::size_t target_index{0};
+        std::uint32_t source_id{0};
+    };
+    using WorkPayload = std::variant<
+        ActionWork, EffectWork, ResolvedEffectWork, TriggerOwnerWork,
+        TriggerAllWork, ReactionWork, LifetimeWork, DecrementBuffWork,
+        DeathCheckWork>;
+    struct WorkItem {
+        CombatEventContext context;
+        WorkPayload payload;
+    };
+    struct ReactionCandidate {
+        ReactionWork work;
+        std::int32_t priority{0};
+        std::uint32_t definition_id{0};
+    };
+
+    void drain_work_queue();
+    void push_root(WorkPayload payload, Trigger trigger, UnitId source = 0,
+                   UnitId target = 0, UnitId subject = 0,
+                   std::uint32_t source_id = 0);
+    void push_child(WorkPayload payload, const CombatEventContext& parent,
+                    Trigger trigger, UnitId source = 0, UnitId target = 0,
+                    UnitId subject = 0, std::uint32_t source_id = 0);
+    void schedule_effects(std::size_t source_index,
+                          std::size_t selection_owner_index,
+                          const std::vector<Effect>& effects,
+                          std::uint32_t source_id,
+                          std::optional<std::size_t> trigger_unit,
+                          std::int32_t magnitude_stacks,
+                          const CombatEventContext& parent);
+    std::vector<ReactionCandidate> collect_reactions(
+        std::size_t owner_index, Trigger trigger,
+        std::optional<std::size_t> event_unit, std::uint32_t source_id,
+        std::uint64_t buff_instance_cutoff, bool allow_dead_owner) const;
+    void schedule_reactions(std::vector<ReactionCandidate> candidates,
+                            const CombatEventContext& parent);
+    void process(ActionWork& work, const CombatEventContext& context);
+    void process(EffectWork& work, const CombatEventContext& context);
+    void process(ResolvedEffectWork& work,
+                 const CombatEventContext& context);
+    void process(TriggerOwnerWork& work,
+                 const CombatEventContext& context);
+    void process(TriggerAllWork& work, const CombatEventContext& context);
+    void process(ReactionWork& work, const CombatEventContext& context);
+    void process(LifetimeWork& work, const CombatEventContext& context);
+    void process(DecrementBuffWork& work,
+                 const CombatEventContext& context);
+    void process(DeathCheckWork& work,
+                 const CombatEventContext& context);
     void apply_damage(std::size_t actor_index, std::size_t target_index,
                       const Effect& effect, std::uint32_t source_id,
-                      std::size_t depth);
+                      const CombatEventContext& context);
     void apply_heal(std::size_t actor_index, std::size_t target_index,
-                    const Effect& effect, std::uint32_t source_id);
+                    const Effect& effect, std::uint32_t source_id,
+                    const CombatEventContext& context);
     void apply_buff(std::size_t actor_index, std::size_t target_index,
                     std::shared_ptr<const BuffSpec> definition,
-                    std::uint32_t source_id);
+                    std::uint32_t source_id,
+                    const CombatEventContext& context);
     void remove_buff(std::size_t actor_index, std::size_t target_index,
-                     std::uint32_t buff_id, std::uint32_t source_id);
-    void trigger_owner_snapshot(std::size_t owner_index, Trigger trigger,
-                                std::optional<std::size_t> event_unit,
-                                std::uint32_t source_id, std::size_t depth,
-                                std::uint64_t buff_instance_cutoff);
+                     std::uint32_t buff_id, std::uint32_t source_id,
+                     const CombatEventContext& context);
 
     BattleState& state_;
+    std::vector<WorkItem> work_queue_;
+    bool draining_{false};
 };
 
 // Defines the high-level battle schedule. All ordering decisions live here,

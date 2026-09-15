@@ -26,6 +26,18 @@ T checked_int(std::int64_t value, std::string_view path) {
     return static_cast<T>(value);
 }
 
+template <typename T>
+T bounded_int(std::int64_t value, std::int64_t minimum,
+              std::int64_t maximum, std::string_view path) {
+    const auto converted = checked_int<T>(value, path);
+    if (value < minimum || value > maximum) {
+        throw term::DecodeError(
+            std::string(path) + " must be between " +
+            std::to_string(minimum) + " and " + std::to_string(maximum));
+    }
+    return converted;
+}
+
 std::uint64_t nonnegative_u64(std::int64_t value, std::string_view path) {
     if (value < 0) {
         throw term::DecodeError(std::string(path) + " must not be negative");
@@ -120,6 +132,23 @@ StackScaling parse_stack_scaling(std::string_view value) {
     if (value == "per_stack") return StackScaling::per_stack;
     throw term::DecodeError(
         "buff.reaction.stack_scaling must be once or per_stack");
+}
+
+StackKeyPolicy parse_stack_key_policy(std::string_view value) {
+    if (value == "by_buff") return StackKeyPolicy::by_buff;
+    if (value == "by_buff_and_source") {
+        return StackKeyPolicy::by_buff_and_source;
+    }
+    throw term::DecodeError(
+        "buff.stacking.key must be by_buff or by_buff_and_source");
+}
+
+EventLogLevel parse_event_log_level(std::string_view value) {
+    if (value == "result_only") return EventLogLevel::result_only;
+    if (value == "summary") return EventLogLevel::summary;
+    if (value == "full") return EventLogLevel::full;
+    throw term::DecodeError(
+        "log_level must be result_only, summary, or full");
 }
 
 BasisPoints basis_points(const Value& object, std::string_view key, BasisPoints default_value) {
@@ -241,7 +270,8 @@ BuffSpec parse_buff(const Value& value, std::size_t depth) {
 
     const auto& stacking = require_field(value, "stacking", "buff");
     require_only_fields(
-        stacking, "buff.stacking", {"max_stacks", "policy", "refresh"});
+        stacking, "buff.stacking",
+        {"max_stacks", "policy", "refresh", "key"});
     buff.stacking.max_stacks = checked_int<std::int32_t>(
         term::as_int(
             require_field(stacking, "max_stacks", "buff.stacking"),
@@ -253,6 +283,9 @@ BuffSpec parse_buff(const Value& value, std::size_t depth) {
     buff.stacking.refresh = parse_refresh_policy(term::as_string(
         require_field(stacking, "refresh", "buff.stacking"),
         "buff.stacking.refresh"));
+    buff.stacking.key = parse_stack_key_policy(term::as_string(
+        require_field(stacking, "key", "buff.stacking"),
+        "buff.stacking.key"));
     if (buff.stacking.mode == StackPolicy::refresh &&
         buff.stacking.max_stacks != 1) {
         throw term::DecodeError(
@@ -269,10 +302,16 @@ BuffSpec parse_buff(const Value& value, std::size_t depth) {
         require_only_fields(
             item, "buff.reaction",
             {"trigger", "source", "stack_scaling", "chance_bp",
-             "max_triggers_per_round", "effects"});
+             "max_triggers_per_round", "priority", "effects"});
         BuffReaction reaction;
         reaction.trigger = parse_trigger(
             term::get_string(item, "trigger", "round_end"));
+        reaction.priority = bounded_int<std::int32_t>(
+            term::as_int(
+                require_field(item, "priority", "buff.reaction"),
+                "buff.reaction.priority"),
+            -1'000'000, 1'000'000,
+            "buff.reaction.priority");
         reaction.source = parse_effect_source(
             term::get_string(item, "source", "owner"));
         reaction.stack_scaling = parse_stack_scaling(
@@ -330,11 +369,20 @@ Skill parse_skill(const Value& value) {
 }
 
 Passive parse_passive(const Value& value) {
-    term::as_object(value, "passive");
+    require_only_fields(
+        value, "passive",
+        {"id", "name", "trigger", "priority", "chance_bp",
+         "max_triggers_per_round", "effects"});
     Passive passive;
     passive.id = checked_int<std::uint32_t>(term::get_int(value, "id"), "passive.id");
     passive.name = term::get_string(value, "name");
     passive.trigger = parse_trigger(term::get_string(value, "trigger", "on_damaged"));
+    passive.priority = bounded_int<std::int32_t>(
+        term::as_int(
+            require_field(value, "priority", "passive"),
+            "passive.priority"),
+        -1'000'000, 1'000'000,
+        "passive.priority");
     passive.chance_bp = basis_points(value, "chance_bp", 10000);
     passive.max_triggers_per_round = checked_int<std::int32_t>(
         term::get_int(value, "max_triggers_per_round"), "passive.max_triggers_per_round");
@@ -537,14 +585,26 @@ std::filesystem::path path_from_utf8(std::string_view text) {
 } // namespace
 
 BattleRequest parse_request(const Value& value, const ConfigStore* configs) {
-    term::as_object(value, "request");
+    require_only_fields(
+        value, "request",
+        {"battle_id", "seed", "max_rounds", "max_execution_steps",
+         "max_logged_events", "log_level", "attacker", "defender",
+         "initial_conditions"});
     BattleRequest request;
     request.battle_id = nonnegative_u64(term::get_int(value, "battle_id"), "battle_id");
     request.seed = nonnegative_u64(term::get_int(value, "seed", 1), "seed");
     request.max_rounds = checked_int<std::int32_t>(term::get_int(value, "max_rounds", 50),
                                                    "max_rounds");
-    request.max_events = checked_int<std::int32_t>(term::get_int(value, "max_events", 10000),
-                                                   "max_events");
+    request.max_execution_steps = bounded_int<std::int32_t>(
+        term::get_int(value, "max_execution_steps", 100000),
+        100, 10'000'000,
+        "max_execution_steps");
+    request.max_logged_events = bounded_int<std::int32_t>(
+        term::get_int(value, "max_logged_events", 10000),
+        0, 1'000'000,
+        "max_logged_events");
+    request.event_log_level = parse_event_log_level(
+        term::get_string(value, "log_level", "full"));
     const auto* attacker = term::find(value, "attacker");
     const auto* defender = term::find(value, "defender");
     if (attacker == nullptr || defender == nullptr) {
@@ -564,6 +624,9 @@ Value encode_result(const BattleResult& result) {
     for (const auto& event : result.events) {
         events.push_back(Value::object({
             {"seq", Value(static_cast<std::int64_t>(event.seq))},
+            {"event_id", integer(event.event_id)},
+            {"parent_event_id", integer(event.parent_event_id)},
+            {"depth", Value(static_cast<std::int64_t>(event.depth))},
             {"round", Value(static_cast<std::int64_t>(event.round))},
             {"phase", Value::atom(event.phase)},
             {"type", Value::atom(event.type)},
@@ -600,6 +663,11 @@ Value encode_result(const BattleResult& result) {
         {"rounds", Value(static_cast<std::int64_t>(result.rounds))},
         {"attacker_initiative", integer(result.attacker_initiative)},
         {"defender_initiative", integer(result.defender_initiative)},
+        {"execution_steps", integer(result.execution_steps)},
+        {"total_event_count", integer(result.total_event_count)},
+        {"logged_event_count", integer(result.logged_event_count)},
+        {"events_truncated", Value::atom(
+            result.events_truncated ? "true" : "false")},
         {"events", Value::list(std::move(events))},
         {"units", Value::list(std::move(units))}
     });

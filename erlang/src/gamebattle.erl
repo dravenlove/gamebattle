@@ -63,7 +63,9 @@ example_request() ->
         battle_id => 20260902001,
         seed => 778899,
         max_rounds => 20,
-        max_events => 5000,
+        max_execution_steps => 100000,
+        max_logged_events => 5000,
+        log_level => full,
         initial_conditions => #{
             source_battle_id => 0,
             first_side => automatic,
@@ -150,6 +152,7 @@ poison_passive() ->
         trigger => on_hit,
         chance_bp => 4000,
         max_triggers_per_round => 1,
+        priority => 100,
         effects => [#{
             type => add_buff,
             target => trigger_unit,
@@ -164,7 +167,8 @@ poison_passive() ->
                 stacking => #{
                     max_stacks => 3,
                     policy => stack,
-                    refresh => reset
+                    refresh => reset,
+                    key => by_buff_and_source
                 },
                 modifiers => [],
                 reactions => [#{
@@ -173,6 +177,7 @@ poison_passive() ->
                     stack_scaling => per_stack,
                     chance_bp => 10000,
                     max_triggers_per_round => 0,
+                    priority => 100,
                     effects => [#{
                         type => direct_damage,
                         target => self,
@@ -191,6 +196,7 @@ beauty_passive() ->
         name => <<"鼓舞">>,
         trigger => battle_start,
         chance_bp => 10000,
+        priority => 100,
         effects => [#{
             type => add_buff,
             target => all_allies,
@@ -205,7 +211,8 @@ beauty_passive() ->
                 stacking => #{
                     max_stacks => 1,
                     policy => refresh,
-                    refresh => reset
+                    refresh => reset,
+                    key => by_buff
                 },
                 modifiers => [#{
                     attribute => attack,
@@ -225,6 +232,7 @@ counter_passive() ->
         trigger => on_damaged,
         chance_bp => 2500,
         max_triggers_per_round => 1,
+        priority => 100,
         effects => [
             #{type => damage, target => trigger_unit, attack_bp => 5000}
         ]

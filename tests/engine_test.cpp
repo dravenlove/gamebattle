@@ -30,7 +30,8 @@ gamebattle::BattleRequest sample_request() {
     request.battle_id = 90001;
     request.seed = 20260902;
     request.max_rounds = 20;
-    request.max_events = 2000;
+    request.max_execution_steps = 2000;
+    request.max_logged_events = 2000;
 
     auto fast = hero(1001, 1, 130, 900, 170, 20);
     gamebattle::Skill skill;
@@ -115,6 +116,7 @@ gamebattle::term::Value request_term_with_buff(gamebattle::term::Value buff) {
         {"id", Value(std::int64_t{7001})},
         {"name", Value::binary("embedded_buff")},
         {"trigger", Value::atom("battle_start")},
+        {"priority", Value(std::int64_t{0})},
         {"effects", Value::list({std::move(add_buff)})}
     });
     return Value::object({
@@ -149,7 +151,8 @@ void test_wire_generic_buff_schema_and_reject_legacy_fields() {
         {"stacking", Value::object({
             {"max_stacks", Value(std::int64_t{4})},
             {"policy", Value::atom("stack")},
-            {"refresh", Value::atom("extend")}
+            {"refresh", Value::atom("extend")},
+            {"key", Value::atom("by_buff")}
         })},
         {"modifiers", Value::list({
             Value::object({
@@ -169,6 +172,7 @@ void test_wire_generic_buff_schema_and_reject_legacy_fields() {
             {"stack_scaling", Value::atom("per_stack")},
             {"chance_bp", Value(std::int64_t{10000})},
             {"max_triggers_per_round", Value(std::int64_t{1})},
+            {"priority", Value(std::int64_t{0})},
             {"effects", Value::list({Value::object({
                 {"type", Value::atom("direct_damage")},
                 {"target", Value::atom("self")},
@@ -273,7 +277,8 @@ void test_wire_generic_buff_schema_and_reject_legacy_fields() {
                 {"stacking", Value::object({
                     {"max_stacks", Value(std::int64_t{2})},
                     {"policy", Value::atom("refresh")},
-                    {"refresh", Value::atom("reset")}
+                    {"refresh", Value::atom("reset")},
+                    {"key", Value::atom("by_buff")}
                 })},
                 {"modifiers", Value::list({})},
                 {"reactions", Value::list({})}
@@ -297,7 +302,8 @@ void test_wire_embedded_buff_depth_limit() {
         {"stacking", Value::object({
             {"max_stacks", Value(std::int64_t{1})},
             {"policy", Value::atom("refresh")},
-            {"refresh", Value::atom("reset")}
+            {"refresh", Value::atom("reset")},
+            {"key", Value::atom("by_buff")}
         })},
         {"modifiers", Value::list({})},
         {"reactions", Value::list({})}
@@ -319,12 +325,14 @@ void test_wire_embedded_buff_depth_limit() {
             {"stacking", Value::object({
                 {"max_stacks", Value(std::int64_t{1})},
                 {"policy", Value::atom("refresh")},
-                {"refresh", Value::atom("reset")}
+                {"refresh", Value::atom("reset")},
+                {"key", Value::atom("by_buff")}
             })},
             {"modifiers", Value::list({})},
             {"reactions", Value::list({Value::object({
                 {"trigger", Value::atom("round_end")},
                 {"source", Value::atom("owner")},
+                {"priority", Value(std::int64_t{0})},
                 {"effects", Value::list({std::move(nested_effect)})}
             })})}
         });
@@ -346,7 +354,8 @@ void test_core_rejects_invalid_buff_definitions() {
         request.battle_id = 92500;
         request.seed = 1;
         request.max_rounds = 1;
-        request.max_events = 1000;
+        request.max_execution_steps = 1000;
+        request.max_logged_events = 1000;
 
         auto attacker = hero(4501, 1, 100, 1000, 100, 0);
         gamebattle::Passive passive;
@@ -416,7 +425,8 @@ void test_generic_modifier_composition() {
     request.battle_id = 93001;
     request.seed = 7;
     request.max_rounds = 1;
-    request.max_events = 1000;
+    request.max_execution_steps = 1000;
+    request.max_logged_events = 1000;
 
     auto attacker = hero(5001, 1, 200, 1000, 100, 0);
     gamebattle::Skill strike;
@@ -481,7 +491,8 @@ void test_refresh_and_lifetime_are_deterministic() {
     request.battle_id = 93002;
     request.seed = 8;
     request.max_rounds = 2;
-    request.max_events = 1000;
+    request.max_execution_steps = 1000;
+    request.max_logged_events = 1000;
 
     auto attacker = hero(5002, 1, 200, 10000, 1, 0);
     auto refreshable = std::make_shared<gamebattle::BuffSpec>();
@@ -529,6 +540,390 @@ void test_refresh_and_lifetime_are_deterministic() {
     }
     assert(additions == 2);
     assert(expired_in_round_two);
+}
+
+const gamebattle::UnitResult& find_result_unit(
+    const gamebattle::BattleResult& result, gamebattle::UnitId id);
+
+void test_fatal_damage_runs_on_damaged_and_unit_death() {
+    gamebattle::BattleRequest request;
+    request.battle_id = 94001;
+    request.seed = 1;
+    request.max_rounds = 1;
+    request.max_execution_steps = 10000;
+    request.max_logged_events = 1000;
+
+    request.attacker.units.push_back(hero(7001, 1, 200, 100, 200, 0));
+    auto defender = hero(7002, 1, 100, 100, 1, 0);
+
+    gamebattle::Passive fatal_counter;
+    fatal_counter.id = 9101;
+    fatal_counter.name = "fatal_counter";
+    fatal_counter.trigger = gamebattle::Trigger::on_damaged;
+    fatal_counter.priority = 100;
+    fatal_counter.effects.push_back(gamebattle::Effect{
+        .kind = gamebattle::EffectKind::direct_damage,
+        .target = gamebattle::TargetRule::trigger_unit,
+        .attack_bp = 0,
+        .flat = 7
+    });
+
+    gamebattle::Passive death_burst;
+    death_burst.id = 9102;
+    death_burst.name = "death_burst";
+    death_burst.trigger = gamebattle::Trigger::unit_death;
+    death_burst.priority = 90;
+    death_burst.effects.push_back(gamebattle::Effect{
+        .kind = gamebattle::EffectKind::direct_damage,
+        .target = gamebattle::TargetRule::enemy_front,
+        .attack_bp = 0,
+        .flat = 11
+    });
+    defender.passives = {fatal_counter, death_burst};
+    request.defender.units.push_back(std::move(defender));
+
+    const auto result = gamebattle::Engine{}.simulate(request);
+    std::uint32_t hit_seq = 0;
+    std::uint32_t damaged_passive_seq = 0;
+    std::uint32_t death_seq = 0;
+    std::uint32_t death_passive_seq = 0;
+    std::uint64_t hit_event_id = 0;
+    std::uint64_t damaged_passive_parent = 0;
+    std::uint64_t death_event_id = 0;
+    std::uint64_t death_passive_parent = 0;
+    bool found_counter_damage = false;
+    bool found_death_damage = false;
+    for (const auto& event : result.events) {
+        assert(event.event_id != 0);
+        if (event.type == "damage" && event.actor == 7001 &&
+            event.target == 7002) {
+            hit_seq = event.seq;
+            hit_event_id = event.event_id;
+        }
+        if (event.type == "passive" && event.source_id == 9101) {
+            damaged_passive_seq = event.seq;
+            damaged_passive_parent = event.parent_event_id;
+        }
+        if (event.type == "death" && event.target == 7002) {
+            death_seq = event.seq;
+            death_event_id = event.event_id;
+        }
+        if (event.type == "passive" && event.source_id == 9102) {
+            death_passive_seq = event.seq;
+            death_passive_parent = event.parent_event_id;
+        }
+        found_counter_damage = found_counter_damage ||
+            (event.type == "direct_damage" && event.actor == 7002 &&
+             event.target == 7001 && event.source_id == 9101 &&
+             event.value == 7);
+        found_death_damage = found_death_damage ||
+            (event.type == "direct_damage" && event.actor == 7002 &&
+             event.target == 7001 && event.source_id == 9102 &&
+             event.value == 11);
+    }
+    assert(hit_seq > 0);
+    assert(hit_seq < damaged_passive_seq);
+    assert(damaged_passive_parent == hit_event_id);
+    assert(damaged_passive_seq < death_seq);
+    assert(death_seq < death_passive_seq);
+    assert(death_passive_parent == death_event_id);
+    assert(found_counter_damage);
+    assert(found_death_damage);
+    assert(find_result_unit(result, 7001).hp == 82);
+}
+
+void test_reaction_priority_is_global_and_descending() {
+    gamebattle::BattleRequest request;
+    request.battle_id = 94002;
+    request.seed = 2;
+    request.max_rounds = 1;
+    request.max_execution_steps = 10000;
+    request.max_logged_events = 1000;
+
+    auto low_priority_unit = hero(7101, 1, 200, 1000, 1, 0);
+    gamebattle::Passive low;
+    low.id = 9201;
+    low.name = "low";
+    low.trigger = gamebattle::Trigger::battle_start;
+    low.priority = -10;
+    low.effects.push_back(gamebattle::Effect{
+        .kind = gamebattle::EffectKind::direct_damage,
+        .target = gamebattle::TargetRule::enemy_front,
+        .attack_bp = 0,
+        .flat = 1
+    });
+    low_priority_unit.passives.push_back(std::move(low));
+
+    auto high_priority_unit = hero(7102, 2, 190, 1000, 1, 0);
+    gamebattle::Passive high;
+    high.id = 9202;
+    high.name = "high";
+    high.trigger = gamebattle::Trigger::battle_start;
+    high.priority = 100;
+    high.effects.push_back(gamebattle::Effect{
+        .kind = gamebattle::EffectKind::direct_damage,
+        .target = gamebattle::TargetRule::enemy_front,
+        .attack_bp = 0,
+        .flat = 1
+    });
+    high_priority_unit.passives.push_back(std::move(high));
+
+    request.attacker.units.push_back(std::move(low_priority_unit));
+    request.attacker.units.push_back(std::move(high_priority_unit));
+    request.defender.units.push_back(hero(7103, 1, 100, 10000, 1, 0));
+
+    const auto result = gamebattle::Engine{}.simulate(request);
+    std::vector<std::uint32_t> battle_start_passives;
+    for (const auto& event : result.events) {
+        if (event.type == "passive" &&
+            (event.source_id == 9201 || event.source_id == 9202)) {
+            battle_start_passives.push_back(event.source_id);
+        }
+    }
+    assert(battle_start_passives.size() == 2);
+    assert(battle_start_passives[0] == 9202);
+    assert(battle_start_passives[1] == 9201);
+}
+
+void test_buff_stack_key_keeps_appliers_independent() {
+    gamebattle::BattleRequest request;
+    request.battle_id = 94003;
+    request.seed = 3;
+    request.max_rounds = 1;
+    request.max_execution_steps = 10000;
+    request.max_logged_events = 2000;
+
+    auto poison = std::make_shared<gamebattle::BuffSpec>();
+    poison->id = 9301;
+    poison->name = "per_source_poison";
+    poison->lifetime.duration = 2;
+    poison->lifetime.decrement_on = gamebattle::Trigger::round_end;
+    poison->stacking.max_stacks = 3;
+    poison->stacking.mode = gamebattle::StackPolicy::stack;
+    poison->stacking.key = gamebattle::StackKeyPolicy::by_buff_and_source;
+    gamebattle::BuffReaction tick;
+    tick.trigger = gamebattle::Trigger::round_end;
+    tick.priority = 0;
+    tick.source = gamebattle::EffectSource::applier;
+    tick.stack_scaling = gamebattle::StackScaling::per_stack;
+    tick.effects.push_back(gamebattle::Effect{
+        .kind = gamebattle::EffectKind::direct_damage,
+        .target = gamebattle::TargetRule::self,
+        .attack_bp = 10000,
+        .flat = 0
+    });
+    poison->reactions.push_back(std::move(tick));
+
+    const auto poison_applier = [&](gamebattle::UnitId id,
+                                    std::int64_t attack,
+                                    std::int32_t priority) {
+        auto unit = hero(id, static_cast<int>(id - 7200),
+                         200 - static_cast<std::int64_t>(id - 7201),
+                         1000, attack, 0);
+        gamebattle::Passive passive;
+        passive.id = static_cast<std::uint32_t>(9400 + id - 7200);
+        passive.name = "apply_poison";
+        passive.trigger = gamebattle::Trigger::battle_start;
+        passive.priority = priority;
+        gamebattle::Effect effect;
+        effect.kind = gamebattle::EffectKind::add_buff;
+        effect.target = gamebattle::TargetRule::enemy_front;
+        effect.buff = poison;
+        passive.effects.push_back(std::move(effect));
+        unit.passives.push_back(std::move(passive));
+        return unit;
+    };
+
+    request.attacker.units.push_back(poison_applier(7201, 10, 100));
+    request.attacker.units.push_back(poison_applier(7202, 20, 90));
+    request.defender.units.push_back(hero(7203, 1, 100, 10000, 1, 0));
+
+    const auto result = gamebattle::Engine{}.simulate(request);
+    std::int32_t additions = 0;
+    std::vector<std::pair<gamebattle::UnitId, std::int64_t>> ticks;
+    for (const auto& event : result.events) {
+        if (event.type == "buff_add" && event.target == 7203) {
+            ++additions;
+            assert(event.value == 1);
+        }
+        if (event.type == "direct_damage" && event.source_id == 9301) {
+            ticks.emplace_back(event.actor, event.value);
+        }
+    }
+    assert(additions == 2);
+    assert(ticks.size() == 2);
+    assert(ticks[0].first == 7201 && ticks[0].second == 10);
+    assert(ticks[1].first == 7202 && ticks[1].second == 20);
+}
+
+void test_exhausted_reaction_does_not_consume_rng() {
+    gamebattle::BattleRequest request;
+    request.battle_id = 94004;
+    request.seed = 6; // SplitMix rolls: 592, 3833, 1686, 7808.
+    request.max_rounds = 1;
+    request.max_execution_steps = 10000;
+    request.max_logged_events = 2000;
+
+    auto attacker = hero(7301, 1, 200, 10000, 1, 0);
+    gamebattle::Skill double_hit;
+    double_hit.id = 9501;
+    double_hit.name = "double_hit";
+    double_hit.effects = {
+        gamebattle::Effect{
+            .kind = gamebattle::EffectKind::damage,
+            .target = gamebattle::TargetRule::enemy_front,
+            .attack_bp = 0,
+            .flat = 1
+        },
+        gamebattle::Effect{
+            .kind = gamebattle::EffectKind::damage,
+            .target = gamebattle::TargetRule::enemy_front,
+            .attack_bp = 0,
+            .flat = 1
+        }
+    };
+    attacker.skills.push_back(std::move(double_hit));
+
+    const auto probabilistic_passive = [](
+        std::uint32_t id, std::int32_t priority,
+        std::int32_t max_triggers) {
+        gamebattle::Passive passive;
+        passive.id = id;
+        passive.name = "rng_probe";
+        passive.trigger = gamebattle::Trigger::on_hit;
+        passive.priority = priority;
+        passive.chance_bp = 5000;
+        passive.max_triggers_per_round = max_triggers;
+        passive.effects.push_back(gamebattle::Effect{
+            .kind = gamebattle::EffectKind::heal,
+            .target = gamebattle::TargetRule::self,
+            .attack_bp = 0,
+            .flat = 0
+        });
+        return passive;
+    };
+    attacker.passives.push_back(probabilistic_passive(9601, 100, 1));
+    attacker.passives.push_back(probabilistic_passive(9602, 0, 0));
+    request.attacker.units.push_back(std::move(attacker));
+    request.defender.units.push_back(hero(7302, 1, 100, 10000, 1, 0));
+
+    const auto result = gamebattle::Engine{}.simulate(request);
+    std::int32_t probe_triggers = 0;
+    for (const auto& event : result.events) {
+        if (event.type == "passive" && event.source_id == 9602) {
+            ++probe_triggers;
+        }
+    }
+    // On hit two, passive 9601 is already exhausted. The third random value
+    // therefore belongs to 9602 and succeeds; consuming it before the limit
+    // check would give 9602 the fourth value and only one trigger.
+    assert(probe_triggers == 2);
+}
+
+void assert_same_outcome(const gamebattle::BattleResult& left,
+                         const gamebattle::BattleResult& right) {
+    assert(left.winner == right.winner);
+    assert(left.reason == right.reason);
+    assert(left.rounds == right.rounds);
+    assert(left.execution_steps == right.execution_steps);
+    assert(left.total_event_count == right.total_event_count);
+    assert(left.units.size() == right.units.size());
+    for (std::size_t index = 0; index < left.units.size(); ++index) {
+        assert(left.units[index].id == right.units[index].id);
+        assert(left.units[index].hp == right.units[index].hp);
+        assert(left.units[index].alive == right.units[index].alive);
+    }
+}
+
+void test_logging_budget_never_changes_combat() {
+    auto full_request = sample_request();
+    full_request.battle_id = 94005;
+    full_request.max_execution_steps = 100000;
+    full_request.max_logged_events = 10000;
+    full_request.event_log_level = gamebattle::EventLogLevel::full;
+    const auto full = gamebattle::Engine{}.simulate(full_request);
+    assert(!full.events_truncated);
+    assert(full.events.size() == full.total_event_count);
+
+    auto capped_request = full_request;
+    capped_request.max_logged_events = 3;
+    const auto capped = gamebattle::Engine{}.simulate(capped_request);
+    assert_same_outcome(full, capped);
+    assert(capped.events.size() == 3);
+    assert(capped.logged_event_count == 3);
+    assert(capped.events_truncated);
+
+    auto result_only_request = full_request;
+    result_only_request.max_logged_events = 0;
+    result_only_request.event_log_level =
+        gamebattle::EventLogLevel::result_only;
+    const auto result_only = gamebattle::Engine{}.simulate(result_only_request);
+    assert_same_outcome(full, result_only);
+    assert(result_only.events.empty());
+    assert(result_only.logged_event_count == 0);
+    assert(!result_only.events_truncated);
+
+    auto summary_request = full_request;
+    summary_request.event_log_level = gamebattle::EventLogLevel::summary;
+    const auto summary = gamebattle::Engine{}.simulate(summary_request);
+    assert_same_outcome(full, summary);
+    assert(!summary.events.empty());
+    assert(summary.events.size() < full.events.size());
+    std::uint32_t previous_seq = 0;
+    for (const auto& event : summary.events) {
+        assert(event.seq > previous_seq);
+        previous_seq = event.seq;
+        assert(event.type == "initiative" || event.type == "skill" ||
+               event.type == "passive" || event.type == "buff_reaction" ||
+               event.type == "buff_add" || event.type == "buff_remove" ||
+               event.type == "buff_expire" || event.type == "death");
+    }
+}
+
+void test_execution_budget_stops_before_unlogged_mutation() {
+    gamebattle::BattleRequest full_request;
+    full_request.battle_id = 94006;
+    full_request.seed = 4;
+    full_request.max_rounds = 1;
+    full_request.max_execution_steps = 100;
+    full_request.max_logged_events = 1000;
+
+    auto attacker = hero(7401, 1, 200, 1000, 1, 0);
+    gamebattle::Skill many_hits;
+    many_hits.id = 9701;
+    many_hits.name = "many_hits";
+    for (std::int32_t index = 0; index < 64; ++index) {
+        many_hits.effects.push_back(gamebattle::Effect{
+            .kind = gamebattle::EffectKind::damage,
+            .target = gamebattle::TargetRule::enemy_front,
+            .attack_bp = 0,
+            .flat = 1
+        });
+    }
+    attacker.skills.push_back(std::move(many_hits));
+    full_request.attacker.units.push_back(std::move(attacker));
+    full_request.defender.units.push_back(
+        hero(7402, 1, 100, 100000, 1, 0));
+
+    const auto full = gamebattle::Engine{}.simulate(full_request);
+    assert(full.reason == "execution_limit");
+    assert(full.winner == gamebattle::Winner::draw);
+    assert(full.execution_steps == 100);
+    std::int64_t logged_damage = 0;
+    for (const auto& event : full.events) {
+        if (event.type == "damage" && event.target == 7402) {
+            logged_damage += event.value;
+        }
+    }
+    assert(find_result_unit(full, 7402).hp == 100000 - logged_damage);
+
+    auto result_only_request = full_request;
+    result_only_request.max_logged_events = 0;
+    result_only_request.event_log_level =
+        gamebattle::EventLogLevel::result_only;
+    const auto result_only = gamebattle::Engine{}.simulate(result_only_request);
+    assert_same_outcome(full, result_only);
+    assert(result_only.events.empty());
 }
 
 void test_engine_flow_and_determinism() {
@@ -631,6 +1026,87 @@ void test_initially_defeated_and_invalid_carryover() {
     assert(rejected);
 }
 
+gamebattle::term::Value simple_wire_request(
+    std::int64_t max_execution_steps,
+    std::int64_t max_logged_events,
+    std::string log_level) {
+    using gamebattle::term::Value;
+    const auto unit = [](std::int64_t id, std::int64_t speed) {
+        return Value::object({
+            {"id", Value(id)},
+            {"kind", Value::atom("hero")},
+            {"position", Value(std::int64_t{1})},
+            {"final_stats", Value::object({
+                {"hp", Value(std::int64_t{100})},
+                {"attack", Value(std::int64_t{10})},
+                {"defense", Value(std::int64_t{0})},
+                {"speed", Value(speed)}
+            })}
+        });
+    };
+    return Value::object({
+        {"battle_id", Value(std::int64_t{95001})},
+        {"seed", Value(std::int64_t{9})},
+        {"max_rounds", Value(std::int64_t{1})},
+        {"max_execution_steps", Value(max_execution_steps)},
+        {"max_logged_events", Value(max_logged_events)},
+        {"log_level", Value::atom(std::move(log_level))},
+        {"attacker", Value::object({
+            {"formation", Value::atom("test")},
+            {"units", Value::list({unit(8001, 100)})}
+        })},
+        {"defender", Value::object({
+            {"formation", Value::atom("test")},
+            {"units", Value::list({unit(8002, 90)})}
+        })}
+    });
+}
+
+void test_wire_phase_one_contract() {
+    using gamebattle::term::Value;
+    const auto request = simple_wire_request(1000, 0, "result_only");
+    const auto parsed = gamebattle::wire::parse_request(request);
+    assert(parsed.max_execution_steps == 1000);
+    assert(parsed.max_logged_events == 0);
+    assert(parsed.event_log_level == gamebattle::EventLogLevel::result_only);
+
+    gamebattle::wire::Handler handler;
+    const auto response = gamebattle::term::decode(
+        handler.handle_etf(gamebattle::term::encode(request)));
+    const auto* tuple = std::get_if<Value::TupleValue>(&response.data);
+    assert(tuple != nullptr && tuple->value.size() == 2);
+    assert(gamebattle::term::as_string(tuple->value[0], "status") == "ok");
+    const auto& result = tuple->value[1];
+    assert(gamebattle::term::get_int(result, "execution_steps") > 0);
+    assert(gamebattle::term::get_int(result, "total_event_count") > 0);
+    assert(gamebattle::term::get_int(result, "logged_event_count") == 0);
+    assert(!gamebattle::term::get_bool(result, "events_truncated"));
+    assert(gamebattle::term::as_list(
+               *gamebattle::term::find(result, "events"), "events").empty());
+
+    const auto invalid_budget = gamebattle::term::decode(
+        handler.handle_etf(gamebattle::term::encode(
+            simple_wire_request(99, 100, "full"))));
+    const auto* invalid_tuple =
+        std::get_if<Value::TupleValue>(&invalid_budget.data);
+    assert(invalid_tuple != nullptr && invalid_tuple->value.size() == 2);
+    assert(gamebattle::term::as_string(
+               invalid_tuple->value[0], "status") == "error");
+
+    auto legacy = simple_wire_request(1000, 100, "full");
+    auto* legacy_object = std::get_if<Value::ObjectValue>(&legacy.data);
+    assert(legacy_object != nullptr);
+    legacy_object->value.emplace_back(
+        "max_events", Value(std::int64_t{1000}));
+    const auto legacy_response = gamebattle::term::decode(
+        handler.handle_etf(gamebattle::term::encode(legacy)));
+    const auto* legacy_tuple =
+        std::get_if<Value::TupleValue>(&legacy_response.data);
+    assert(legacy_tuple != nullptr && legacy_tuple->value.size() == 2);
+    assert(gamebattle::term::as_string(
+               legacy_tuple->value[0], "status") == "error");
+}
+
 void test_term_codec_and_wire_errors() {
     const auto value = gamebattle::term::Value::object({
         {"answer", gamebattle::term::Value(std::int64_t{42})},
@@ -669,9 +1145,16 @@ int main() {
     test_core_rejects_invalid_buff_definitions();
     test_generic_modifier_composition();
     test_refresh_and_lifetime_are_deterministic();
+    test_fatal_damage_runs_on_damaged_and_unit_death();
+    test_reaction_priority_is_global_and_descending();
+    test_buff_stack_key_keeps_appliers_independent();
+    test_exhausted_reaction_does_not_consume_rng();
+    test_logging_budget_never_changes_combat();
+    test_execution_budget_stops_before_unlogged_mutation();
     test_engine_flow_and_determinism();
     test_initial_hp_carryover();
     test_initially_defeated_and_invalid_carryover();
+    test_wire_phase_one_contract();
     test_term_codec_and_wire_errors();
     std::cout << "all gamebattle tests passed\n";
     return 0;
