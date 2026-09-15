@@ -1,2 +1,2 @@
-id,name,trigger,chance_bp,max_triggers_per_round,effect_ids,notes
-701,测试被动,on_hit,4000,1,9001,合法引用用于隔离错误
+id,name,trigger,priority,chance_bp,max_triggers_per_round,effect_ids,notes
+701,测试被动,on_hit,0,4000,1,9001,合法引用用于隔离错误

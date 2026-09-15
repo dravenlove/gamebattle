@@ -240,7 +240,9 @@ application:ensure_all_started(gamebattle),
 | `battle_id` | 非负整数，透传到结果 |
 | `seed` | 非负整数，决定所有概率和速度相同时的先手 |
 | `max_rounds` | 最大回合数，默认 50 |
-| `max_events` | 最大事件数，默认 10000，防止被动循环无限放大 |
+| `max_execution_steps` | 最大执行步数，默认 100000，独立限制效果与触发链计算量 |
+| `max_logged_events` | 最多保留的战报事件数，默认 10000；允许为 0 |
+| `log_level` | `result_only`、`summary` 或 `full`，默认 `full` |
 | `attacker`, `defender` | 双方布阵 map |
 | `initial_conditions` | 可选的本场运行时初值；未指定的对象默认满血 |
 
@@ -289,7 +291,8 @@ application:ensure_all_started(gamebattle),
   stacking => #{
       max_stacks => 3,
       policy => stack,             %% stack | refresh
-      refresh => reset             %% reset | extend | keep
+      refresh => reset,            %% reset | extend | keep
+      key => by_buff               %% by_buff | by_buff_and_source
   },
   modifiers => [
       #{attribute => defense, operation => add, value => -20}
@@ -300,15 +303,18 @@ application:ensure_all_started(gamebattle),
       stack_scaling => per_stack,  %% once | per_stack
       chance_bp => 10000,
       max_triggers_per_round => 0,
+      priority => 100,
       effects => [#{type => direct_damage, target => self, flat => 35}]
   }]}.
 ```
 
-`lifetime`、`stacking`、`modifiers`、`reactions` 在内联 ETF 中都必须显式出现，空组件使用空列表。协议会拒绝未知字段和旧版固定字段，不会静默套默认模型。永久 Buff 的 `duration` 必须为 `0`；`refresh` 只刷新持续时间，因此其 `max_stacks` 必须为 `1`。
+`lifetime`、`stacking`、`modifiers`、`reactions` 在内联 ETF 中都必须显式出现，空组件使用空列表。`stacking.key`、每个 Passive 的 `priority` 和每个 Reaction 的 `priority` 也必须显式填写。协议会拒绝未知字段和旧版固定字段，不会静默套默认模型。永久 Buff 的 `duration` 必须为 `0`；`refresh` 只刷新持续时间，因此其 `max_stacks` 必须为 `1`。
 
 Modifier 当前可选择 `attack`、`defense`、`speed`、`crit_rate_bp`、`crit_damage_bp`、`hit_rate_bp`、`dodge_rate_bp`、`damage_bonus_bp`、`damage_reduction_bp`。`add` 先累加固定值，`scale_bp` 再按增量万分比缩放，例如 `1000` 表示在加法阶段之后增加 10%。
 
 Reaction 的目标选择始终以 Buff 持有者为上下文；`source` 只决定效果属性取自持有者还是施加者。`per_stack` 会按当前层数放大伤害、直接伤害和治疗的数值，不会重复执行添加或移除 Buff。线上请求通常优先使用 `skill_ids`、`passive_ids` 和已加载配置包，内联结构更适合测试与调试。
+
+同一个 Trigger 内，Passive 和 Buff Reaction 统一按 `priority` 从小到大执行；相同优先级再按稳定注册顺序执行。`by_buff` 表示相同 Buff ID 共用一个运行时实例，`by_buff_and_source` 表示不同施加者分别拥有独立实例。
 
 ### 初始条件与连续战斗
 
@@ -364,7 +370,10 @@ Waves = [
     port,
     Attacker,
     Waves,
-    #{max_rounds => 20, max_events => 5000}
+    #{max_rounds => 20,
+      max_execution_steps => 100000,
+      max_logged_events => 2000,
+      log_level => summary}
 ).
 ```
 
@@ -383,7 +392,7 @@ Waves = [
 }.
 ```
 
-每个 Wave 必须提供唯一的 `battle_id`、确定性 `seed` 和 `defender` 布阵，可单独覆盖 `max_rounds`、`max_events`、`first_side`。若服务在中间波次发生执行错误，返回值中仍保留已经完成的 `wave_results` 和最后一份 `carryover`；把剩余 Waves 与该 carryover 作为 `initial_conditions` 传给 `run_gauntlet/4` 即可断点恢复。
+每个 Wave 必须提供唯一的 `battle_id`、确定性 `seed` 和 `defender` 布阵，可单独覆盖 `max_rounds`、`max_execution_steps`、`max_logged_events`、`log_level`、`first_side`。若服务在中间波次发生执行错误，返回值中仍保留已经完成的 `wave_results` 和最后一份 `carryover`；把剩余 Waves 与该 carryover 作为 `initial_conditions` 传给 `run_gauntlet/4` 即可断点恢复。
 
 技能效果支持：
 
@@ -395,7 +404,7 @@ Waves = [
 
 目标规则支持 `self`、`trigger_unit`、`enemy_front`、`enemy_lowest_hp`、`ally_lowest_hp`、`all_enemies`、`all_allies`。`trigger_unit` 用于“命中者给本次受击者挂毒”或“受击者反击本次攻击者”。
 
-被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；框架另有 32 层触发深度和 `max_events` 两道保险。
+被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；框架另有 32 层触发深度和独立的 `max_execution_steps` 执行预算。
 
 Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不递减。周期伤害、持续治疗、受击反击等都表示为 Reaction 执行普通 Effect，不再由单独的 Tick 字段和代码路径处理。
 
@@ -412,12 +421,18 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
   rounds := RoundCount,
   attacker_initiative := Integer,
   defender_initiative := Integer,
+  execution_steps := Integer,
+  total_event_count := Integer,
+  logged_event_count := Integer,
+  events_truncated := boolean(),
   events := [Event, ...],
   units := [#{id := Id, side := Side, initial_hp := InitialHp,
               hp := Hp, max_hp := MaxHp, alive := Bool}, ...]}.
 ```
 
-事件包含严格递增的 `seq`，以及 `round`、`phase`、`type`、`actor`、`target`、`source_id`、`value`、受击前后 HP 和暴击标记。前端可以只依赖事件流播放战报，服务端则以 `units` 和 `winner` 做最终结算。
+`execution_steps` 是战斗真正消耗的执行预算；`total_event_count` 是内部产生的全部事件数；`logged_event_count` 是实际保留在 `events` 中的数量。`result_only` 主动不记录事件，不视为截断；`summary` 只记录引擎定义的关键事件；只有达到 `max_logged_events` 丢弃本应记录的事件时，`events_truncated` 才为 `true`。
+
+事件包含严格递增的 `seq`，以及用于还原触发因果链的 `event_id`、`parent_event_id`、`depth`，另外还有 `round`、`phase`、`type`、`actor`、`target`、`source_id`、`value`、受击前后 HP 和暴击标记。前端可以用事件 ID 关系展示“攻击 → 受击被动 → Buff Reaction”等嵌套来源，服务端仍以 `units` 和 `winner` 做最终结算。
 
 ## v1 的明确边界
 

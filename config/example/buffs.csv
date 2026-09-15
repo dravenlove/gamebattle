@@ -1,3 +1,3 @@
-id,name,lifetime,duration,decrement_on,max_stacks,stack_policy,refresh_policy,notes
-801,中毒,finite,2,round_end,3,stack,reset,回合结束由reaction结算直接伤害
-802,鼓舞,finite,3,round_end,1,refresh,reset,通过通用modifier增加攻击
+id,name,lifetime,duration,decrement_on,max_stacks,stack_key,stack_policy,refresh_policy,notes
+801,中毒,finite,2,round_end,3,by_buff_and_source,stack,reset,同一施加者独立叠层并在回合结束结算
+802,鼓舞,finite,3,round_end,1,by_buff,refresh,reset,通过通用modifier增加攻击

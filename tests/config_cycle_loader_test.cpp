@@ -75,11 +75,13 @@ std::vector<std::uint8_t> make_cycle_pack() {
     append_i32(payload, 1); // duration
     append_u8(payload, static_cast<std::uint8_t>(gamebattle::Trigger::round_end));
     append_i32(payload, 1); // max stacks
+    append_u8(payload, static_cast<std::uint8_t>(gamebattle::StackKeyPolicy::by_buff));
     append_u8(payload, static_cast<std::uint8_t>(gamebattle::StackPolicy::refresh));
     append_u8(payload, static_cast<std::uint8_t>(gamebattle::RefreshPolicy::reset));
 
     append_u32(payload, buff_id);
     append_u32(payload, 1); // reaction sequence
+    append_i32(payload, 0); // reaction priority
     append_u8(payload, static_cast<std::uint8_t>(gamebattle::Trigger::round_end));
     append_u8(payload, static_cast<std::uint8_t>(gamebattle::EffectSource::owner));
     append_u8(payload, static_cast<std::uint8_t>(gamebattle::StackScaling::once));

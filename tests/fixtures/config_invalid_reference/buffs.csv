@@ -1,2 +1,2 @@
-id,name,lifetime,duration,decrement_on,max_stacks,stack_policy,refresh_policy,notes
-801,中毒,finite,2,round_end,3,stack,reset,合法Buff用于隔离错误
+id,name,lifetime,duration,decrement_on,max_stacks,stack_key,stack_policy,refresh_policy,notes
+801,中毒,finite,2,round_end,3,by_buff_and_source,stack,reset,合法Buff用于隔离错误
