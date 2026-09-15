@@ -168,7 +168,7 @@ poison_passive() ->
                     max_stacks => 3,
                     policy => stack,
                     refresh => reset,
-                    key => by_buff
+                    key => by_buff_and_source
                 },
                 modifiers => [],
                 reactions => [#{

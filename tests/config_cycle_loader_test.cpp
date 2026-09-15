@@ -113,7 +113,7 @@ std::vector<std::uint8_t> make_cycle_pack() {
 
 int main() {
     const auto path = std::filesystem::temp_directory_path() /
-                      "gamebattle-invalid-buff-cycle-v2.gbcfg";
+                      "gamebattle-invalid-buff-cycle-v3.gbcfg";
     const auto bytes = make_cycle_pack();
     {
         std::ofstream output(path, std::ios::binary | std::ios::trunc);

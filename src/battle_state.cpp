@@ -5,6 +5,7 @@
 #include <functional>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_set>
 
 namespace gamebattle::runtime {
@@ -16,6 +17,13 @@ inline constexpr std::size_t kAttributeCount =
 bool valid_trigger(Trigger trigger) {
     return static_cast<std::uint8_t>(trigger) <=
            static_cast<std::uint8_t>(Trigger::round_end);
+}
+
+bool is_summary_event(std::string_view type) {
+    return type == "initiative" || type == "skill" ||
+           type == "passive" || type == "buff_reaction" ||
+           type == "buff_add" || type == "buff_remove" ||
+           type == "buff_expire" || type == "death";
 }
 
 std::int64_t saturating_multiply(std::int64_t left, std::int64_t right) {
@@ -98,8 +106,19 @@ void validate_request(const BattleRequest& request) {
     if (request.max_rounds < 1 || request.max_rounds > 10000) {
         throw std::invalid_argument("max_rounds must be between 1 and 10000");
     }
-    if (request.max_events < 100 || request.max_events > 1'000'000) {
-        throw std::invalid_argument("max_events must be between 100 and 1000000");
+    if (request.max_execution_steps < 100 ||
+        request.max_execution_steps > 10'000'000) {
+        throw std::invalid_argument(
+            "max_execution_steps must be between 100 and 10000000");
+    }
+    if (request.max_logged_events < 0 ||
+        request.max_logged_events > 1'000'000) {
+        throw std::invalid_argument(
+            "max_logged_events must be between 0 and 1000000");
+    }
+    if (static_cast<std::uint8_t>(request.event_log_level) >
+        static_cast<std::uint8_t>(EventLogLevel::full)) {
+        throw std::invalid_argument("event_log_level is invalid");
     }
     if (request.attacker.units.empty() || request.defender.units.empty()) {
         throw std::invalid_argument("both formations must contain at least one unit");
@@ -129,7 +148,7 @@ void validate_request(const BattleRequest& request) {
         if (definition == nullptr) {
             throw std::invalid_argument("add_buff effect requires a buff definition");
         }
-        if (depth > kMaxTriggerDepth) {
+        if (depth > kMaxDefinitionDepth) {
             throw std::invalid_argument("buff definition nesting is too deep");
         }
         const auto* buff = definition.get();
@@ -152,6 +171,8 @@ void validate_request(const BattleRequest& request) {
                 static_cast<std::uint8_t>(StackPolicy::refresh) ||
             static_cast<std::uint8_t>(buff->stacking.refresh) >
                 static_cast<std::uint8_t>(RefreshPolicy::keep) ||
+            static_cast<std::uint8_t>(buff->stacking.key) >
+                static_cast<std::uint8_t>(StackKeyPolicy::by_buff_and_source) ||
             (buff->stacking.mode == StackPolicy::refresh &&
              buff->stacking.max_stacks != 1)) {
             throw std::invalid_argument("buff policies are outside supported bounds");
@@ -182,6 +203,8 @@ void validate_request(const BattleRequest& request) {
                     static_cast<std::uint8_t>(EffectSource::applier) ||
                 static_cast<std::uint8_t>(reaction.stack_scaling) >
                     static_cast<std::uint8_t>(StackScaling::per_stack) ||
+                reaction.priority < -1'000'000 ||
+                reaction.priority > 1'000'000 ||
                 !valid_probability(reaction.chance_bp) ||
                 reaction.max_triggers_per_round < 0 ||
                 reaction.max_triggers_per_round > 10000 ||
@@ -275,7 +298,10 @@ void validate_request(const BattleRequest& request) {
             std::unordered_set<std::uint32_t> passive_ids;
             for (const auto& passive : unit.passives) {
                 if (passive.id == 0 || !passive_ids.insert(passive.id).second ||
+                    !valid_trigger(passive.trigger) ||
                     !valid_probability(passive.chance_bp) ||
+                    passive.priority < -1'000'000 ||
+                    passive.priority > 1'000'000 ||
                     passive.max_triggers_per_round < 0 ||
                     passive.max_triggers_per_round > 10000 || passive.effects.empty() ||
                     passive.effects.size() > 64) {
@@ -491,6 +517,9 @@ bool BattleState::side_defeated(Side side) const {
 }
 
 bool BattleState::finish_if_decided(std::string reason) {
+    if (execution_limit) {
+        return false;
+    }
     const bool attacker_dead = side_defeated(Side::attacker);
     const bool defender_dead = side_defeated(Side::defender);
     if (!attacker_dead && !defender_dead) {
@@ -515,16 +544,75 @@ void BattleState::reset_round_trigger_counts() {
     }
 }
 
-void BattleState::emit(std::string event_phase, std::string type, Side side,
+bool BattleState::consume_execution_step() {
+    if (execution_limit) {
+        return false;
+    }
+    if (result.execution_steps >=
+        static_cast<std::uint64_t>(request.max_execution_steps)) {
+        execution_limit = true;
+        return false;
+    }
+    ++result.execution_steps;
+    return true;
+}
+
+CombatEventContext BattleState::make_event_context(
+    Trigger trigger,
+    UnitId source,
+    UnitId target,
+    UnitId subject,
+    std::uint32_t source_id,
+    std::uint64_t parent_event_id,
+    std::uint32_t depth) {
+    if (next_event_id == std::numeric_limits<std::uint64_t>::max()) {
+        execution_limit = true;
+        return CombatEventContext{
+            .event_id = next_event_id,
+            .parent_event_id = parent_event_id,
+            .depth = depth,
+            .trigger = trigger,
+            .source = source,
+            .target = target,
+            .subject = subject,
+            .source_id = source_id
+        };
+    }
+    return CombatEventContext{
+        .event_id = next_event_id++,
+        .parent_event_id = parent_event_id,
+        .depth = depth,
+        .trigger = trigger,
+        .source = source,
+        .target = target,
+        .subject = subject,
+        .source_id = source_id
+    };
+}
+
+void BattleState::emit(const CombatEventContext& context,
+                       std::string event_phase, std::string type, Side side,
                        UnitId actor, UnitId target, std::uint32_t source_id,
                        std::int64_t value, std::int64_t hp_before,
                        std::int64_t hp_after, bool critical) {
-    if (result.events.size() >= static_cast<std::size_t>(request.max_events)) {
-        event_limit = true;
+    ++result.total_event_count;
+    const bool should_log =
+        request.event_log_level == EventLogLevel::full ||
+        (request.event_log_level == EventLogLevel::summary &&
+         is_summary_event(type));
+    if (!should_log) {
+        return;
+    }
+    if (result.events.size() >=
+        static_cast<std::size_t>(request.max_logged_events)) {
+        result.events_truncated = true;
         return;
     }
     result.events.push_back(Event{
-        .seq = static_cast<std::uint32_t>(result.events.size() + 1),
+        .seq = static_cast<std::uint32_t>(result.total_event_count),
+        .event_id = context.event_id,
+        .parent_event_id = context.parent_event_id,
+        .depth = context.depth,
         .round = round,
         .phase = std::move(event_phase),
         .type = std::move(type),
@@ -537,9 +625,11 @@ void BattleState::emit(std::string event_phase, std::string type, Side side,
         .hp_after = hp_after,
         .critical = critical
     });
+    result.logged_event_count = result.events.size();
 }
 
 BattleResult BattleState::finish() {
+    result.logged_event_count = result.events.size();
     result.units.reserve(units.size());
     for (const auto& unit : units) {
         result.units.push_back(UnitResult{

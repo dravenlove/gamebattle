@@ -26,6 +26,18 @@ T checked_int(std::int64_t value, std::string_view path) {
     return static_cast<T>(value);
 }
 
+template <typename T>
+T bounded_int(std::int64_t value, std::int64_t minimum,
+              std::int64_t maximum, std::string_view path) {
+    const auto converted = checked_int<T>(value, path);
+    if (value < minimum || value > maximum) {
+        throw term::DecodeError(
+            std::string(path) + " must be between " +
+            std::to_string(minimum) + " and " + std::to_string(maximum));
+    }
+    return converted;
+}
+
 std::uint64_t nonnegative_u64(std::int64_t value, std::string_view path) {
     if (value < 0) {
         throw term::DecodeError(std::string(path) + " must not be negative");
@@ -294,10 +306,11 @@ BuffSpec parse_buff(const Value& value, std::size_t depth) {
         BuffReaction reaction;
         reaction.trigger = parse_trigger(
             term::get_string(item, "trigger", "round_end"));
-        reaction.priority = checked_int<std::int32_t>(
+        reaction.priority = bounded_int<std::int32_t>(
             term::as_int(
                 require_field(item, "priority", "buff.reaction"),
                 "buff.reaction.priority"),
+            -1'000'000, 1'000'000,
             "buff.reaction.priority");
         reaction.source = parse_effect_source(
             term::get_string(item, "source", "owner"));
@@ -364,10 +377,11 @@ Passive parse_passive(const Value& value) {
     passive.id = checked_int<std::uint32_t>(term::get_int(value, "id"), "passive.id");
     passive.name = term::get_string(value, "name");
     passive.trigger = parse_trigger(term::get_string(value, "trigger", "on_damaged"));
-    passive.priority = checked_int<std::int32_t>(
+    passive.priority = bounded_int<std::int32_t>(
         term::as_int(
             require_field(value, "priority", "passive"),
             "passive.priority"),
+        -1'000'000, 1'000'000,
         "passive.priority");
     passive.chance_bp = basis_points(value, "chance_bp", 10000);
     passive.max_triggers_per_round = checked_int<std::int32_t>(
@@ -581,11 +595,13 @@ BattleRequest parse_request(const Value& value, const ConfigStore* configs) {
     request.seed = nonnegative_u64(term::get_int(value, "seed", 1), "seed");
     request.max_rounds = checked_int<std::int32_t>(term::get_int(value, "max_rounds", 50),
                                                    "max_rounds");
-    request.max_execution_steps = checked_int<std::int32_t>(
+    request.max_execution_steps = bounded_int<std::int32_t>(
         term::get_int(value, "max_execution_steps", 100000),
+        100, 10'000'000,
         "max_execution_steps");
-    request.max_logged_events = checked_int<std::int32_t>(
+    request.max_logged_events = bounded_int<std::int32_t>(
         term::get_int(value, "max_logged_events", 10000),
+        0, 1'000'000,
         "max_logged_events");
     request.event_log_level = parse_event_log_level(
         term::get_string(value, "log_level", "full"));

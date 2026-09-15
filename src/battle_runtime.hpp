@@ -14,7 +14,7 @@
 namespace gamebattle::runtime {
 
 inline constexpr std::int64_t kBasisPoints = 10000;
-inline constexpr std::size_t kMaxTriggerDepth = 32;
+inline constexpr std::size_t kMaxDefinitionDepth = 32;
 inline constexpr std::size_t kTriggerCount =
     static_cast<std::size_t>(Trigger::round_end) + 1;
 
@@ -114,8 +114,8 @@ public:
         std::optional<std::size_t> trigger_unit);
 };
 
-// Executes declarative skills, passives and buffs. It owns rule recursion but
-// not the round/side schedule.
+// Executes declarative skills, passives and buffs through an explicit LIFO
+// work queue. It owns effect/reaction ordering but not the round/side schedule.
 class EffectSystem {
 public:
     explicit EffectSystem(BattleState& state);
@@ -173,6 +173,7 @@ private:
         std::size_t owner_index{0};
         Trigger trigger{Trigger::round_end};
         std::uint64_t buff_instance_cutoff{0};
+        bool allow_dead_owner{false};
     };
     struct DecrementBuffWork {
         std::size_t owner_index{0};
@@ -192,6 +193,11 @@ private:
         CombatEventContext context;
         WorkPayload payload;
     };
+    struct ReactionCandidate {
+        ReactionWork work;
+        std::int32_t priority{0};
+        std::uint32_t definition_id{0};
+    };
 
     void drain_work_queue();
     void push_root(WorkPayload payload, Trigger trigger, UnitId source = 0,
@@ -200,13 +206,19 @@ private:
     void push_child(WorkPayload payload, const CombatEventContext& parent,
                     Trigger trigger, UnitId source = 0, UnitId target = 0,
                     UnitId subject = 0, std::uint32_t source_id = 0);
-    void schedule_effects(std::size_t_t source_index,
+    void schedule_effects(std::size_t source_index,
                           std::size_t selection_owner_index,
                           const std::vector<Effect>& effects,
                           std::uint32_t source_id,
                           std::optional<std::size_t> trigger_unit,
                           std::int32_t magnitude_stacks,
                           const CombatEventContext& parent);
+    std::vector<ReactionCandidate> collect_reactions(
+        std::size_t owner_index, Trigger trigger,
+        std::optional<std::size_t> event_unit, std::uint32_t source_id,
+        std::uint64_t buff_instance_cutoff, bool allow_dead_owner) const;
+    void schedule_reactions(std::vector<ReactionCandidate> candidates,
+                            const CombatEventContext& parent);
     void process(ActionWork& work, const CombatEventContext& context);
     void process(EffectWork& work, const CombatEventContext& context);
     void process(ResolvedEffectWork& work,

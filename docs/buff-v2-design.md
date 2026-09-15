@@ -70,11 +70,13 @@ struct LifetimePolicy {
 ```cpp
 enum class StackPolicy : std::uint8_t { stack, refresh };
 enum class RefreshPolicy : std::uint8_t { reset, extend, keep };
+enum class StackKeyPolicy : std::uint8_t { by_buff, by_buff_and_source };
 
 struct StackingPolicy {
     std::int32_t max_stacks;
     StackPolicy mode;
     RefreshPolicy refresh;
+    StackKeyPolicy key;
 };
 ```
 
@@ -83,9 +85,11 @@ struct StackingPolicy {
 - `reset`：剩余持续时间重置为配置值。
 - `extend`：在当前剩余值上追加配置值。
 - `keep`：不改变剩余持续时间。
+- `by_buff`：同一持有者的相同 Buff ID 共用实例，重施时来源更新为最后施加者。
+- `by_buff_and_source`：Buff ID 与施加者共同组成键，各施加者独立叠层和过期。
 
-第一版仍按 `buff_id` 合并。按来源分层、每层独立过期和满层溢出行为是后续可以增加的
-StackingPolicy 组件，不再改动 Modifier 或 Reaction。
+每层独立过期和满层溢出行为仍是后续可以增加的 StackingPolicy 组件，不需要改动
+Modifier 或 Reaction。
 
 ## 事件反应
 
@@ -95,6 +99,7 @@ enum class StackScaling : std::uint8_t { once, per_stack };
 
 struct BuffReaction {
     Trigger trigger;
+    std::int32_t priority;
     EffectSource source;
     StackScaling stack_scaling;
     BasisPoints chance_bp;
@@ -110,6 +115,10 @@ struct BuffReaction {
 `once` 表示效果数值与层数无关；`per_stack` 会让伤害、治疗和直接伤害的倍率与固定值
 按当前层数放大。它必须显式配置，避免所有 Reaction 被隐式套用叠层规则。
 
+同一 Trigger 的 Passive 与 Buff Reaction 进入统一候选集合，按 `priority` 降序执行；
+同优先级再按单位顺序、类型、定义 ID、Buff 实例 ID 和配置顺序稳定排序。次数上限先于
+概率检查，因此已经耗尽次数的 Reaction 不会消费随机数。
+
 周期效果不再使用独立的 Tick 固定字段。例如中毒编译为：
 
 ```text
@@ -119,6 +128,23 @@ BuffReaction(round_end, applier, per_stack)
 
 `direct_damage` 是明确的效果机制：绕过命中、闪避、防御、暴击、增伤和减伤，但仍触发
 受击与死亡事件。普通 `damage` 保持完整攻击结算。
+
+## 显式执行队列与事件上下文
+
+技能、Reaction、效果解析、生命周期递减和死亡检查都转换为 `WorkItem`，由 LIFO
+`WorkQueue` 深度优先执行，不再依赖 C++ 递归调用栈表达规则顺序。每个任务携带
+`event_id`、`parent_event_id` 和 `depth`；伤害结算后的固定顺序是：
+
+```text
+伤害状态修改
+→ 攻击者 on_hit
+→ 受击者 on_damaged（致死也执行）
+→ DeathCheck
+→ unit_death（死亡者本人可以监听）
+```
+
+`max_execution_steps` 在每个任务执行前消费，超限以 `execution_limit` 结束；
+`max_logged_events` 与 `log_level` 只裁剪战报，绝不停止计算或改变最终状态。
 
 ## 定义与实例
 
@@ -150,7 +176,7 @@ skills.csv  ─────────────→ effects.csv
 passives.csv ────────────→ effects.csv
 ```
 
-GBCF 主版本升级为 2。策划 CSV 是规范化关系表；编译器负责字符串枚举解析、范围检查、
+当前 GBCF 主版本为 3。策划 CSV 是规范化关系表；编译器负责字符串枚举解析、范围检查、
 引用检查和环检测；C++ 加载后只保留类型化、不可变对象。
 
 ## 兼容边界
@@ -162,11 +188,11 @@ GBCF 主版本升级为 2。策划 CSV 是规范化关系表；编译器负责�
 - `gamebattle:carryover/2`
 - `gamebattle:run_gauntlet/3,4`
 - Port `{packet, 4}` ETF 帧
-- `BattleResult` 的胜负、事件与单位剩余生命字段
+- `BattleResult` 的胜负与单位剩余生命字段
 
 内嵌 Buff ETF 只接受 `lifetime`、`stacking`、`modifiers`、`reactions` 组成的通用模型，
 四个组件必须显式出现。协议会拒绝旧固定字段和未知字段，不在边界维护兼容转换。
-GBCF 是构建产物，本次直接升级到 2.0，由新配置编译器重新生成。
+GBCF 是构建产物，当前 3.0 与 2.0 不兼容，必须由新配置编译器重新生成。
 
 默认车轮战仍只继承 HP。若以后需要跨场继承 Buff，应单独增加包含 `buff_id`、层数、
 剩余计数、来源策略和配置版本的显式持久状态，不能复制运行时指针或属性缓存。

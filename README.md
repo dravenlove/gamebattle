@@ -314,7 +314,7 @@ Modifier 当前可选择 `attack`、`defense`、`speed`、`crit_rate_bp`、`crit
 
 Reaction 的目标选择始终以 Buff 持有者为上下文；`source` 只决定效果属性取自持有者还是施加者。`per_stack` 会按当前层数放大伤害、直接伤害和治疗的数值，不会重复执行添加或移除 Buff。线上请求通常优先使用 `skill_ids`、`passive_ids` 和已加载配置包，内联结构更适合测试与调试。
 
-同一个 Trigger 内，Passive 和 Buff Reaction 统一按 `priority` 从小到大执行；相同优先级再按稳定注册顺序执行。`by_buff` 表示相同 Buff ID 共用一个运行时实例，`by_buff_and_source` 表示不同施加者分别拥有独立实例。
+同一个 Trigger 内，Passive 和 Buff Reaction 统一按 `priority` 从大到小执行。优先级相同后依次比较单位布阵顺序、类型（Passive 先于 Buff Reaction）、定义 ID、Buff 实例 ID 和配置顺序，因此相同输入一定得到相同执行顺序。`by_buff` 表示相同 Buff ID 共用一个运行时实例，并采用最后一次施加者作为来源；`by_buff_and_source` 表示不同施加者分别拥有独立实例。
 
 ### 初始条件与连续战斗
 
@@ -404,7 +404,7 @@ Waves = [
 
 目标规则支持 `self`、`trigger_unit`、`enemy_front`、`enemy_lowest_hp`、`ally_lowest_hp`、`all_enemies`、`all_allies`。`trigger_unit` 用于“命中者给本次受击者挂毒”或“受击者反击本次攻击者”。
 
-被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；框架另有 32 层触发深度和独立的 `max_execution_steps` 执行预算。
+被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；内联配置图最多嵌套 32 层，运行时再由独立的 `max_execution_steps` 预算防止无限连锁。
 
 Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不递减。周期伤害、持续治疗、受击反击等都表示为 Reaction 执行普通 Effect，不再由单独的 Tick 字段和代码路径处理。
 
@@ -417,7 +417,7 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
   seed := Seed,
   source_battle_id := PreviousBattleId,
   winner := attacker | defender | draw,
-  reason := initial_state | all_units_defeated | round_end | max_rounds | event_limit | battle_start,
+  reason := initial_state | all_units_defeated | round_end | max_rounds | execution_limit | battle_start,
   rounds := RoundCount,
   attacker_initiative := Integer,
   defender_initiative := Integer,
@@ -430,7 +430,7 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
               hp := Hp, max_hp := MaxHp, alive := Bool}, ...]}.
 ```
 
-`execution_steps` 是战斗真正消耗的执行预算；`total_event_count` 是内部产生的全部事件数；`logged_event_count` 是实际保留在 `events` 中的数量。`result_only` 主动不记录事件，不视为截断；`summary` 只记录引擎定义的关键事件；只有达到 `max_logged_events` 丢弃本应记录的事件时，`events_truncated` 才为 `true`。
+`execution_steps` 是战斗真正消耗的执行预算；`total_event_count` 是内部产生的全部事件数；`logged_event_count` 是实际保留在 `events` 中的数量。`result_only` 主动不记录事件，不视为截断；`summary` 只保留 `initiative`、`skill`、`passive`、`buff_reaction`、`buff_add`、`buff_remove`、`buff_expire`、`death`；只有达到 `max_logged_events` 丢弃本应记录的事件时，`events_truncated` 才为 `true`。
 
 事件包含严格递增的 `seq`，以及用于还原触发因果链的 `event_id`、`parent_event_id`、`depth`，另外还有 `round`、`phase`、`type`、`actor`、`target`、`source_id`、`value`、受击前后 HP 和暴击标记。前端可以用事件 ID 关系展示“攻击 → 受击被动 → Buff Reaction”等嵌套来源，服务端仍以 `units` 和 `winner` 做最终结算。
 
