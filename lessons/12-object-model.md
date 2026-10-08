@@ -1,5 +1,7 @@
 # 第 12 课：对象模型与多态
 
+**中文** | [English](en/12-object-model.md)
+
 > 第二部分「C++ 语言深入」的第一课。从这一课开始，内容超出了项目本身用到的范围，覆盖的是 C++ 岗位面试必问、而这个项目恰好没怎么用的部分。每一处都会落回项目，讨论"项目为什么这么设计、换一种写法会怎样"。
 
 ## 1. 先问一个设计问题：项目为什么几乎不用虚函数
@@ -7,7 +9,7 @@
 `Effect` 在项目里是这样表示的（第 6 课）：
 
 ```cpp
-enum class EffectKind : std::uint8_t { damage, heal, add_buff, remove_buff, direct_damage };
+enum class EffectKind : std::uint8_t { damage, heal, add_buff, remove_buff, direct_damage, negate };
 struct Effect { EffectKind kind; TargetRule target; ... };
 
 switch (executable->kind) {

@@ -1,5 +1,7 @@
 # 第 11 课：构建、测试与调试
 
+**中文** | [English](en/11-build-and-test.md)
+
 > 对应文件：`CMakeLists.txt`、`CMakePresets.json`、`scripts/*.ps1`、`tests/*.cpp`
 
 本课的构建和测试结果，都是在 Linux（g++ 13.3、CMake）上实际跑出来的。
@@ -172,9 +174,9 @@ Windows 用 `scripts/build.ps1`（可加 `-WithoutNif`），配置编译器单�
 打开测试和配置编译器，Debug 构建（实测输出节选）：
 
 ```
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::reason' [-Wmissing-field-initializers]
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::events' [-Wmissing-field-initializers]
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::units' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::reason' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::events' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::units' [-Wmissing-field-initializers]
 [ 57%] Built target gamebattle_core
 [ 84%] Built target gamebattle_port
 [100%] Built target gamebattle_tests
@@ -182,7 +184,7 @@ battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::Bat
 100% tests passed, 0 tests failed out of 6
 ```
 
-那三条警告正是第 1 课第 11 节的坑 4：`BattleState` 构造函数（`battle_state.cpp:361`）用指定初始化只写了 `battle_id`、`seed`、`source_battle_id` 三个字段。
+那三条警告正是第 1 课第 11 节的坑 4：`BattleState` 构造函数（`battle_state.cpp:382`）用指定初始化只写了 `battle_id`、`seed`、`source_battle_id` 三个字段。
 
 为什么只警告 `reason`、`events`、`units`，而同样被省略的 `winner`、`rounds` 没有警告？因为 GCC 只对**没有默认成员初始值**的字段发警告：`winner{Winner::draw}`、`rounds{0}` 在 `engine.hpp` 里写了默认值，而 `std::string reason;`、`std::vector<Event> events;` 没写（实测验证过这条规则）。
 
@@ -324,7 +326,7 @@ gdb --args out/build/linux-runtime-debug/gamebattle_tests
 - **在 Linux 上构建 Linux 的产物**。Windows 编出来的 `.exe` / `.dll` 不能部署到 Linux。
 - **glibc 版本**：在旧版本系统上编译的程序，通常能在新版本上运行，反过来不行。所以构建机的发行版版本应该**不高于**生产机，最好完全一致（比如用相同的容器镜像）。
 - **NIF** 必须用与生产环境**同一个 OTP 主版本**的 `erl_nif.h` 编译。
-- Erlang 侧按 `application:get_env(gamebattle, port_executable)` → 环境变量 `GAMEBATTLE_PORT` → `priv/` 目录的顺序查找 Port 可执行文件（`gamebattle_port.erl:103`）。
+- Erlang 侧按 `application:get_env(gamebattle, port_executable)` → 环境变量 `GAMEBATTLE_PORT` → `priv/` 目录的顺序查找 Port 可执行文件（`gamebattle_port.erl:160`）。
 
 ## 9. 课程回顾：以后扩展时，哪些课的警告会用上
 

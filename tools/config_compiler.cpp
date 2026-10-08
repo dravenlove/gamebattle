@@ -1,3 +1,6 @@
+#include "gamebattle/config_check.hpp"
+#include "gamebattle/config_store.hpp"
+
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -121,8 +124,10 @@ struct Tables {
 const std::unordered_map<std::string, std::uint8_t> kEffectKinds{
     {"damage", std::uint8_t{0}}, {"heal", std::uint8_t{1}},
     {"add_buff", std::uint8_t{2}}, {"remove_buff", std::uint8_t{3}},
-    {"direct_damage", std::uint8_t{4}}
+    {"direct_damage", std::uint8_t{4}}, {"negate", std::uint8_t{5}}
 };
+
+constexpr std::uint8_t kNegateEffect = 5;
 
 const std::unordered_map<std::string, std::uint8_t> kTargetRules{
     {"self", std::uint8_t{0}}, {"trigger_unit", std::uint8_t{1}},
@@ -137,8 +142,15 @@ const std::unordered_map<std::string, std::uint8_t> kTriggers{
     {"before_action", std::uint8_t{2}}, {"on_attack", std::uint8_t{3}},
     {"on_hit", std::uint8_t{4}}, {"on_damaged", std::uint8_t{5}},
     {"unit_death", std::uint8_t{6}}, {"after_action", std::uint8_t{7}},
-    {"round_end", std::uint8_t{8}}
+    {"round_end", std::uint8_t{8}},
+    {"enemy_activate", std::uint8_t{9}}, {"ally_activate", std::uint8_t{10}}
 };
+
+// Response triggers only fire while a skill chain is built, so only passives
+// may use them.
+bool is_response_trigger(std::uint8_t trigger) {
+    return trigger == 9 || trigger == 10;
+}
 
 const std::unordered_map<std::string, std::uint8_t> kLifetimes{
     {"finite", std::uint8_t{0}}, {"permanent", std::uint8_t{1}}
@@ -541,6 +553,9 @@ Tables parse_tables(const fs::path& directory) {
             row, "duration", integer(row, "duration", buff.permanent ? 0 : 1),
             0, 10000));
         buff.decrement_on = enum_value(row, "decrement_on", kTriggers);
+        if (is_response_trigger(buff.decrement_on)) {
+            row_error(row, "decrement_on cannot be a response trigger");
+        }
         buff.max_stacks = static_cast<std::int32_t>(bounded(
             row, "max_stacks", integer(row, "max_stacks", 1), 1, 1000));
         buff.stack_policy = enum_value(row, "stack_policy", kStackPolicies);
@@ -594,6 +609,9 @@ Tables parse_tables(const fs::path& directory) {
         reaction.sequence = static_cast<std::uint32_t>(bounded(
             row, "sequence", integer(row, "sequence", 0, false), 1, 4096));
         reaction.trigger = enum_value(row, "trigger", kTriggers);
+        if (is_response_trigger(reaction.trigger)) {
+            row_error(row, "buff reactions cannot use a response trigger");
+        }
         reaction.source = enum_value(row, "source", kEffectSources);
         reaction.stack_scaling =
             enum_value(row, "stack_scaling", kStackScalings);
@@ -665,6 +683,11 @@ Tables parse_tables(const fs::path& directory) {
                                   ": effect_ids references missing effect " +
                                   std::to_string(effect_id));
             }
+            if (tables.effects.at(effect_id).kind == kNegateEffect) {
+                throw ConfigError(reaction.source_file + ":" +
+                                  std::to_string(reaction.source_line) +
+                                  ": negate effects are only valid in response passives");
+            }
         }
     }
 
@@ -726,6 +749,9 @@ Tables parse_tables(const fs::path& directory) {
                 row_error(row, "effect_ids references missing effect " +
                                std::to_string(id));
             }
+            if (tables.effects.at(id).kind == kNegateEffect) {
+                row_error(row, "negate effects are only valid in response passives");
+            }
         }
         if (skill.name.size() > kMaxStringBytes) {
             row_error(row, "name exceeds the 1 MiB limit");
@@ -750,6 +776,11 @@ Tables parse_tables(const fs::path& directory) {
             if (!tables.effects.contains(id)) {
                 row_error(row, "effect_ids references missing effect " +
                                std::to_string(id));
+            }
+            if (tables.effects.at(id).kind == kNegateEffect &&
+                !is_response_trigger(passive.trigger)) {
+                row_error(row, "negate effects require an enemy_activate or "
+                               "ally_activate trigger");
             }
         }
         if (passive.name.size() > kMaxStringBytes) {
@@ -936,7 +967,21 @@ struct Arguments {
     fs::path output;
     bool check_only{false};
     bool help{false};
+    gamebattle::config_check::Options cascades;
 };
+
+std::int32_t option_number(const std::string& option, const fs::path& value,
+                           std::int32_t minimum, std::int32_t maximum) {
+    const auto text = value.generic_string();
+    std::int32_t number = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
+    if (error != std::errc{} || end != text.data() + text.size() || number < minimum ||
+        number > maximum) {
+        throw ConfigError(option + " must be a number between " + std::to_string(minimum) +
+                          " and " + std::to_string(maximum));
+    }
+    return number;
+}
 
 Arguments parse_arguments(std::span<const fs::path> args) {
     Arguments result;
@@ -946,6 +991,17 @@ Arguments parse_arguments(std::span<const fs::path> args) {
             result.help = true;
         } else if (option == "--check-only") {
             result.check_only = true;
+        } else if (option == "--no-stress") {
+            result.cascades.stress = false;
+        } else if (option == "--stress-rounds" || option == "--stress-units") {
+            if (index + 1 >= args.size()) {
+                throw ConfigError(option + " requires a value");
+            }
+            if (option == "--stress-rounds") {
+                result.cascades.rounds = option_number(option, args[++index], 1, 100);
+            } else {
+                result.cascades.units_per_side = option_number(option, args[++index], 1, 256);
+            }
         } else if (option == "--input-dir" || option == "--output") {
             if (index + 1 >= args.size()) {
                 throw ConfigError(option + " requires a value");
@@ -971,15 +1027,27 @@ int run(std::span<const fs::path> args) {
         if (options.help) {
             std::cout
                 << "Usage: gamebattle_config_compiler --input-dir DIR "
-                   "[--output FILE | --check-only]\n";
+                   "[--output FILE | --check-only]\n"
+                   "       [--no-stress] [--stress-rounds N] [--stress-units N]\n"
+                   "After validating the tables it checks for passives and buff reactions\n"
+                   "that set each other off without end, and runs stress battles; a pack\n"
+                   "with such a loop is not written.\n";
             return 0;
         }
         const auto tables = parse_tables(options.input_directory);
+        const auto pack = build_pack(tables);
+        // Load the pack exactly as the servers will, then look for cascades.
+        const auto store = gamebattle::ConfigStore::load_bytes(pack);
+        const auto report = gamebattle::config_check::check(
+            gamebattle::config_check::definitions(store), options.cascades);
+        std::cout << gamebattle::config_check::format(report);
+        if (report.has_errors()) {
+            throw ConfigError("the cascade check found runaway loops; no pack was written");
+        }
         if (options.check_only) {
             std::cout << "configuration is valid\n";
             return 0;
         }
-        const auto pack = build_pack(tables);
         const auto output = fs::absolute(options.output);
         write_pack(output, pack);
         std::cout << "wrote " << path_text(output) << " (" << pack.size()

@@ -1,5 +1,7 @@
 # 第 4 课：回合主循环
 
+**中文** | [English](en/04-battle-loop.md)
+
 > 对应文件：`src/engine.cpp`（135 行）
 
 `engine.cpp` 只决定整场战斗的**先后顺序**。具体一次攻击怎么结算，交给第 6 课的 `EffectSystem`。

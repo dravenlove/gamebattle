@@ -1,6 +1,8 @@
 # 第 3 课：类与确定性随机数
 
-> 对应文件：`src/battle_runtime.hpp:24-32`（`Random`）、`src/battle_state.cpp:338-368`
+**中文** | [English](en/03-class-and-random.md)
+
+> 对应文件：`src/battle_runtime.hpp:24-32`（`Random`）、`src/battle_state.cpp:359-389`
 
 ## 1. class 和 struct：只差一个默认值
 
@@ -92,7 +94,7 @@ Random::Random(std::uint64_t seed) : state_(seed) {}
 
 冒号后面的部分在进入函数体之前执行，直接用给定的值构造成员。有两类成员**只能**用初始化列表：**引用成员**（必须一出生就绑定）和 **const 成员**。
 
-`BattleState` 的构造函数（`battle_state.cpp:358`）：
+`BattleState` 的构造函数（`battle_state.cpp:379`）：
 
 ```cpp
 BattleState::BattleState(const BattleRequest& request_value)
@@ -192,7 +194,7 @@ apply_buff(..., std::make_shared<BuffSpec>());    // shared_ptr<T> → shared_pt
 
 ### 一处必须手写显式构造的地方
 
-`battle_state.cpp:470-474`：
+`battle_state.cpp:506-510`：
 
 ```cpp
 return found == unit_index.end() ? std::nullopt

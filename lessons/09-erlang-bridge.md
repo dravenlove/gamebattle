@@ -1,5 +1,7 @@
 # 第 9 课：对接 Erlang
 
+**中文** | [English](en/09-erlang-bridge.md)
+
 > 对应文件：
 > - Erlang 侧：`erlang/src/gamebattle_port.erl`、`gamebattle_nif.erl`、`gamebattle_sup.erl`、`gamebattle.erl`
 > - C++ 侧：`src/port_main.cpp`、`src/nif.cpp`、`src/term.cpp`（ETF 编解码）、`src/wire.cpp`（ETF ↔ 战斗结构）
@@ -34,21 +36,35 @@ init(Options) ->
     ...
     Port = open_port({spawn_executable, filename:absname(Executable)},
                      [binary, {packet, 4}, use_stdio, exit_status]),
-    {ok, #state{port = Port, executable = Executable, timeout = Timeout}}.
+    case load_startup_config(Port, Timeout) of
+        ok -> {ok, #state{port = Port, executable = Executable, timeout = Timeout}};
+        {error, Reason} -> close_port_safely(Port), {stop, Reason}
+    end.
 
 handle_call({request, Request}, _From, State = #state{port = Port, timeout = Timeout}) ->
+    case exchange(Port, Request, Timeout) of
+        {reply, Response} ->
+            remember_config(Request, Response),
+            {reply, Response, State};
+        {port_exit, Reason, Error} ->
+            {stop, {port_exit, Reason}, {error, Error}, State};
+        timeout ->
+            {stop, port_timeout, {error, #{type => timeout, timeout_ms => Timeout}}, State}
+    end;
+
+exchange(Port, Request, Timeout) ->
     true = port_command(Port, term_to_binary(Request)),
     receive
         {Port, {data, ResponseBinary}} ->
-            {reply, decode_response(ResponseBinary), State};
+            {reply, decode_response(ResponseBinary)};
         {Port, {exit_status, Status}} ->
-            {stop, {port_exit, Status}, {error, #{type => port_exit, status => Status}}, State};
+            {port_exit, Status, #{type => port_exit, status => Status}};
         {'EXIT', Port, Reason} ->
-            {stop, {port_exit, Reason}, {error, #{type => port_exit, reason => Reason}}, State}
+            {port_exit, Reason, #{type => port_exit, reason => Reason}}
     after Timeout ->
         close_port_safely(Port),
-        {stop, port_timeout, {error, #{type => timeout, timeout_ms => Timeout}}, State}
-    end;
+        timeout
+    end.
 ```
 
 这段你应该很熟，几个设计要点：
@@ -57,8 +73,9 @@ handle_call({request, Request}, _From, State = #state{port = Port, timeout = Tim
 |---|---|
 | `{packet, 4}` | 每条消息前加 4 字节大端长度头，C++ 必须按同样格式读写 |
 | `exit_status` | C++ 进程退出时，Erlang 收到 `{Port, {exit_status, N}}`。N 就是 `main` 的返回值 |
-| `handle_call` 里同步 `receive` | **一个 worker 同一时间只处理一场战斗**。这是刻意的背压，不让多个请求争用同一个 Port 的响应 |
+| `handle_call` 里同步等待回复（`exchange/3`） | **一个 worker 同一时间只处理一场战斗**。这是刻意的背压，不让多个请求争用同一个 Port 的响应 |
 | `after Timeout` | C++ 死循环或卡住时，关掉 Port 并 `stop`，监督者重启出一个全新的 C++ 进程 |
+| `init` 里的 `load_startup_config` | 新启动的 C++ 进程里没有配置。设置了 `config_path`（或环境变量 `GAMEBATTLE_CONFIG`）时，先加载配置再接请求；`load_config/1` 成功后会记下新路径（`remember_config`），所以重启后用的仍是最后一次加载的配置 |
 | `gamebattle_sup`：`one_for_one`，10 秒内最多重启 5 次 | 偶发崩溃自动恢复；频繁崩溃则让上层知道 |
 
 需要并发时，README 的建议是起多个 worker、按 `battle_id` 分片，而不是让一个 worker 同时处理多个请求。
@@ -510,11 +527,16 @@ Erlang 侧：
 -on_load(init/0).
 
 init() ->
-    erlang:load_nif(filename:join(resolve_priv_dir(), "gamebattle_nif"), 0).
+    case erlang:load_nif(filename:join(resolve_priv_dir(), "gamebattle_nif"), 0) of
+        ok -> ok;
+        {error, Reason} -> persistent_term:put(?LOAD_ERROR, Reason)
+    end.
 
-simulate(_Request) ->
-    erlang:nif_error(nif_not_loaded).      % 加载成功后被 C++ 实现替换
+simulate(_Request) ->                      % 加载成功后被 C++ 实现替换
+    erlang:nif_error({nif_not_loaded, persistent_term:get(?LOAD_ERROR, undefined)}).
 ```
+
+`init` 在加载失败时也返回 `ok`。`on_load` 返回错误会让模块加载失败，而发布版（release）启动时会加载全部模块，结果只构建了 Port、没有 NIF 库的节点会直接起不来。失败原因存进 `persistent_term`，等真正调用 NIF 时随异常抛出。
 
 ### ① ④ 为什么 NIF 还要转一圈 ETF
 

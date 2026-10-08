@@ -29,6 +29,8 @@ inline const char* trigger_name(gamebattle::Trigger trigger) {
     case Trigger::unit_death: return "unit_death";
     case Trigger::after_action: return "after_action";
     case Trigger::round_end: return "round_end";
+    case Trigger::enemy_activate: return "enemy_activate";
+    case Trigger::ally_activate: return "ally_activate";
     }
     return "round_end";
 }
@@ -55,6 +57,7 @@ inline const char* effect_kind_name(gamebattle::EffectKind kind) {
     case EffectKind::add_buff: return "add_buff";
     case EffectKind::remove_buff: return "remove_buff";
     case EffectKind::direct_damage: return "direct_damage";
+    case EffectKind::negate: return "negate";
     }
     return "damage";
 }

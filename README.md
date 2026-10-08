@@ -1,5 +1,7 @@
 # gamebattle
 
+**中文** | [English](README.en.md)
+
 这是一个可由 Erlang 调用的 C++20 回合制战斗框架。当前版本同时提供：
 
 - `open_port`：默认推荐的生产入口。C++ 崩溃只会带走 Port 进程，Erlang 监督树可以重启它。
@@ -19,6 +21,7 @@
   -> 先手方全部对象依速度、位置行动
        -> before_action Buff / 被动
        -> 按技能优先级逐个判定触发，未触发则普攻
+       -> 发动主动技能时先开启连锁：双方的响应被动依次加入，后加入的先结算
        -> 选目标、命中、伤害、暴击
        -> on_attack / on_hit / on_damaged / unit_death 被动
        -> 被动可以造成伤害、治疗、添加或移除 Buff
@@ -35,19 +38,27 @@
 - `include/gamebattle/engine.hpp`：稳定的 C++ 战斗领域模型。
 - `include/gamebattle/config_store.hpp`：只读、可并发共享的配置内存仓库。
 - `tools/config_compiler.cpp`：C++20 CSV 校验与 `.gbcfg` 二进制配置编译器。
+- `src/config_check.cpp`：编译器对每个配置包做的死循环检查：被动与 Buff reaction 的触发关系图，加上压力战斗。
 - `config/example`：技能、效果、Buff、被动的策划表示例。
 - `docs/buff-v2-design.md`：通用 Modifier、Reaction、生命周期和叠层策略设计。
+- `proto/battle_client.proto`：游戏客户端协议（protobuf），说明见 `docs/client-protocol.md`。
 - `src/engine.cpp`：只负责编排先后手、回合与行动顺序。
 - `src/battle_state.cpp`：本场可变状态、初始条件、属性缓存和结果快照。
 - `src/target_selector.cpp`：独立的目标选择策略。
 - `src/effect_system.cpp`：技能、伤害、被动与 Buff 效果系统。
 - `src/battle_runtime.hpp`：上述运行时组件之间的内部接口。
 - `src/term.cpp`：无第三方依赖的 Erlang External Term Format 子集编解码。
+- `src/report.cpp`：为紧凑结果写出发给客户端的 protobuf 战报，包括按行动聚合；`erlang/src/gamebattle_report.erl` 是它的 Erlang 版。
 - `src/port_main.cpp`：`{packet, 4}` Port 可执行程序。
 - `src/nif.cpp`：dirty CPU NIF 适配器。
 - `erlang/src/gamebattle_port.erl`：受监督、串行化请求的 Port worker。
 - `erlang/src/gamebattle_nif.erl`：NIF 模块。
 - `erlang/src/gamebattle.erl`：统一 API 与完整示例输入。
+- `erlang/src/gamebattle_erl*.erl`：纯 Erlang 版战斗引擎，逐行对应 C++ 引擎，结果完全一致；与 NIF、Port 的性能对比见 `docs/engine-benchmark.md`。
+- `erlang/src/gamebattle_gateway.erl`、`gamebattle_pool.erl`、`gamebattle_demo.erl`：测试网关（TCP + protobuf）、固定并发的战斗池和演示关卡。
+- `client/`：测试客户端，可以打一场看战报，也可以按固定速率压测，见 `client/README.md`。
+- `erlang/src/gamebattle_client.erl`：引擎结果与客户端 protobuf 消息之间的转换和请求校验。
+- `Dockerfile`、`compose.yaml`、`docker/`、`erlang/config/vm.args.src`：Docker 构建镜像与部署镜像，见“Docker 构建与部署”。
 
 ## Windows 构建
 
@@ -96,6 +107,90 @@ cmake --install out/build/linux-runtime-release-nif \
 ```
 
 生产机或构建镜像需要 C++20 编译器、CMake 3.21+ 和 Make；构建 NIF 时，构建机的 Erlang/OTP 主版本应与生产运行时保持一致。若目标系统的 glibc 版本不同，尽量在较旧或与生产完全一致的发行版上编译。
+
+## Docker 构建与部署
+
+不想在本机安装工具链，或者需要在与生产一致的 Linux 上产出文件时，使用仓库根目录的 `Dockerfile`。它有三个目标：
+
+| 目标 | 内容 |
+|---|---|
+| `build` | 构建环境：编译 Port、NIF、配置编译器和 Erlang 代码，运行 C++ 测试与 `rebar3 eunit`（含经过真实 Port 的端到端测试），再组装发布包。任何一步失败，构建就失败。 |
+| `artifacts` | 只含产物，配合 `--output` 导出到本机。 |
+| `runtime`（默认） | 部署镜像：一个独立的战斗节点。它是自带 ERTS 的 Erlang release，游戏服节点通过分布式 Erlang 调用它。 |
+
+### 构建版本
+
+```bash
+# 构建、运行全部测试，并把 Linux 产物导出到 dist/
+docker build --target artifacts --output type=local,dest=dist .
+```
+
+`dist/` 中包含：
+
+- `priv/gamebattle_port`、`priv/gamebattle_nif.so`：放进你自己 Erlang 应用的 `priv/` 目录；
+- `bin/gamebattle_config_compiler`：配置编译器；
+- `gamebattle-0.1.0.tar.gz`：完整的战斗节点发布包，解压后运行 `bin/gamebattle foreground`（环境变量见下文）。
+
+产物在 `erlang:26` 镜像的 Debian bookworm 上编译，部署目标的 glibc 不能比它旧，NIF 只能配合 OTP 26 使用。更换 OTP 版本时，`RUNTIME_IMAGE` 必须与新镜像使用同一个 Debian 版本（用 `docker run --rm erlang:27 cat /etc/os-release` 查看）：
+
+```bash
+docker build --build-arg ERLANG_IMAGE=erlang:27 --build-arg RUNTIME_IMAGE=debian:bookworm-slim \
+  --target artifacts --output type=local,dest=dist .
+```
+
+`build` 目标也可以当工具镜像，用来编译策划配置：
+
+```bash
+docker build --target build -t gamebattle-build .
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/config:/config" gamebattle-build \
+  gamebattle_config_compiler --input-dir /config/example --output /config/generated/battle.gbcfg
+```
+
+### 部署版本
+
+先按上面的方法生成 `config/generated/battle.gbcfg`，再启动战斗节点：
+
+```bash
+export ERLANG_COOKIE="$(openssl rand -hex 32)"   # 与游戏服节点共用同一个 cookie
+docker compose up -d --build
+```
+
+`compose.yaml` 启动名为 `gamebattle@battle` 的节点，把 `config/generated` 只读挂载进容器，Port 每次启动时加载其中的 `battle.gbcfg`。同一 Docker 网络中的游戏服节点（用 `-sname` 短节点名和同一个 cookie 启动）这样调用：
+
+```erlang
+{ok, Result} = erpc:call('gamebattle@battle', gamebattle, simulate, [port, Request], 35000).
+```
+
+游戏服节点在其他机器上、使用 `-name` 长节点名时，让容器直接使用宿主机网络，节点名写宿主机的 IP：
+
+```bash
+docker build -t gamebattle .
+docker run -d --name battle --init --restart unless-stopped --network host \
+  -e NODE_NAME=gamebattle@10.0.0.5 -e ERLANG_COOKIE="$ERLANG_COOKIE" \
+  -e GAMEBATTLE_CONFIG=/etc/gamebattle/battle.gbcfg \
+  -v "$PWD/config/generated:/etc/gamebattle:ro" gamebattle
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `ERLANG_COOKIE` | 无，必须设置 | 集群 cookie。未设置时容器直接退出。 |
+| `NODE_NAME` | `gamebattle@127.0.0.1` | 节点名。`@` 后面必须是游戏服节点访问这个容器所用的主机名或 IP。 |
+| `NODE_NAME_TYPE` | `name` | `name`（长节点名，`@` 后面必须带点，例如 IP）或 `sname`（短节点名）。必须与游戏服节点一致，两种节点互相连不上。 |
+| `GAMEBATTLE_CONFIG` | 不加载 | 配置包路径。Port 每次启动都会加载它，包括崩溃重启之后。 |
+| `DIST_PORT` | `9100` | 分布式 Erlang 端口，与 epmd 的 `4369` 一起开放给游戏服节点。 |
+| `GAMEBATTLE_GATEWAY_PORT` | 不开启 | 测试网关端口，配合 `client/` 的测试客户端做验证和压测，正式服不要开启。相关设置见 [client/README.md](client/README.md)。 |
+
+运维命令：
+
+```bash
+docker exec battle bin/gamebattle eval 'gamebattle_port:ping().'   # {ok, pong}
+docker exec -it battle bin/gamebattle remote_console
+docker logs -f battle
+```
+
+- **安全**：拿到 cookie 并能连上 `4369`、`9100` 的人可以在节点上执行任意代码。这两个端口只开放给内网里的游戏服节点，不要暴露到公网；cookie 使用足够长的随机值。容器以非 root 用户运行，发布目录只读。
+- **故障恢复**：Port 崩溃后由监督树重启，并重新加载配置。10 秒内崩溃超过 5 次时，`gamebattle` 应用停止，节点随之退出，由 Docker 的重启策略拉起新容器。配置包不存在或无效时，节点启动即失败，日志里有 `config_load_failed`。
+- **构建网络**：构建需要访问 Docker Hub、Debian 软件源和 hex.pm。Docker Hub 访问困难时，用 `--build-arg ERLANG_IMAGE=<镜像源>/library/erlang:26 --build-arg RUNTIME_IMAGE=<镜像源>/library/debian:bookworm-slim` 改用镜像源。
 
 ## CLion Debug
 
@@ -149,13 +244,25 @@ Request = gamebattle:example_request(),
 {ok, Result2} = gamebattle:simulate(nif, Request),
 
 true = (Result1 =:= Result2).
+
+%% 纯 Erlang 引擎：在调用进程里运行，结果与 C++ 完全一致
+{ok, Result3} = gamebattle:simulate(erlang, Request),
+true = (Result1 =:= Result3).
 ```
+
+三种方式的速度对比、差距来源和选型建议见 [docs/engine-benchmark.md](docs/engine-benchmark.md)。
 
 也可以通过应用配置指定 Port 路径与超时：
 
 ```erlang
 application:set_env(gamebattle, port_executable, "D:/server/priv/gamebattle_port.exe"),
 application:set_env(gamebattle, port_timeout, 30000).
+```
+
+新启动的 C++ 进程里没有任何配置。设置 `config_path`（或环境变量 `GAMEBATTLE_CONFIG`）后，Port 每次启动都会先加载这个配置包再接请求，崩溃重启后也一样；加载失败时 worker 启动失败。`load_config(port, Path)` 成功后会记下新路径，之后重启加载的仍是最后一次成功加载的包：
+
+```erlang
+application:set_env(gamebattle, config_path, "D:/server/config/battle.gbcfg").
 ```
 
 Port worker 当前一次处理一场战斗，这是刻意的背压边界。需要并发时，应由监督树启动多个带名字或无注册名的 worker，再按 `battle_id` 做一致性分片；不要让多个 Erlang 进程直接争用同一个 Port 的响应。
@@ -179,7 +286,7 @@ passives.csv ──────→ effects.csv
 
 通用 Buff 不再按属性或周期效果扩展固定字段。Buff 定义只组合生命周期策略、叠层策略、通用属性修改器和事件 Reaction；详细语义见 `docs/buff-v2-design.md`。
 
-表字段、枚举和填写规则见 `config/README.md`。先校验配置：
+表字段、枚举和填写规则见 `config/README.md`。编译器除了校验表格，还会检查有没有被动和 Buff reaction 会无休止地互相触发（例如没有 `max_triggers_per_round` 的反击被动互相反击），并跑压力战斗；发现这样的死循环就拒绝生成配置包，见[死循环检查](config/README.md#死循环检查)。先校验配置：
 
 ```powershell
 .\erlang\bin\gamebattle_config_compiler.exe `
@@ -209,8 +316,9 @@ application:ensure_all_started(gamebattle),
 {ok, #{buffs := 2, effects := 5, skills := 1, passives := 3}} =
     gamebattle:load_config(port, "D:/server/config/battle.gbcfg").
 
-%% NIF 使用独立的进程内配置仓库，需要单独加载：
-{ok, _} = gamebattle:load_config(nif, "D:/server/config/battle.gbcfg").
+%% NIF 和纯 Erlang 引擎各有一份配置，用到哪个就分别加载：
+{ok, _} = gamebattle:load_config(nif, "D:/server/config/battle.gbcfg"),
+{ok, _} = gamebattle:load_config(erlang, "D:/server/config/battle.gbcfg").
 ```
 
 加载成功后，单位可以只传配置 ID，不再把完整技能结构重复发送给 C++：
@@ -243,6 +351,7 @@ application:ensure_all_started(gamebattle),
 | `max_events` | 最大事件数，默认 10000，防止被动循环无限放大 |
 | `attacker`, `defender` | 双方布阵 map |
 | `initial_conditions` | 可选的本场运行时初值；未指定的对象默认满血 |
+| `report` | 可选：`summary`、`actions` 或 `events`。设置后，结果不再带事件列表，而是带上发给客户端的 protobuf 战报，见[紧凑结果](#紧凑结果) |
 
 布阵结构：
 
@@ -392,12 +501,40 @@ Waves = [
 - `heal`：攻击倍率加固定值。
 - `add_buff`：按照 Buff 的 `StackingPolicy` 添加、叠层或刷新。
 - `remove_buff`：必须提供非零 `buff_id`，只移除指定 Buff；当前不提供隐式“清全部”通配语义。
+- `negate`：无效这个响应所回应的连锁环节（技能或上一个响应）。只能用在 `enemy_activate`、`ally_activate` 被动里，见下面的「连锁与响应」。
 
 目标规则支持 `self`、`trigger_unit`、`enemy_front`、`enemy_lowest_hp`、`ally_lowest_hp`、`all_enemies`、`all_allies`。`trigger_unit` 用于“命中者给本次受击者挂毒”或“受击者反击本次攻击者”。
 
-被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；框架另有 32 层触发深度和 `max_events` 两道保险。
+被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；框架另有 32 层触发深度和 `max_events` 两道保险。被动还可以使用 `enemy_activate`、`ally_activate` 两个响应触发点。
 
 Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不递减。周期伤害、持续治疗、受击反击等都表示为 Reaction 执行普通 Effect，不再由单独的 Tick 字段和代码路径处理。
+
+### 连锁与响应
+
+主动技能（不含普攻）发动后不会立刻结算，而是先开启一条**连锁**，规则类似游戏王：
+
+1. 技能本身是第 1 个环节。
+2. 询问谁要响应最上面的环节：先问对方（`enemy_activate` 被动），再问同一方的其他单位（`ally_activate` 被动）。同一方内按速度、站位、ID 的顺序询问，第一个通过概率判定的被动加入连锁，成为新的最上面的环节，然后重新询问。
+3. 每个单位在一条连锁里最多加入一个环节；没有人响应时停止询问。
+4. 从最后加入的环节开始倒序结算。`negate` 让它回应的那个环节被跳过；某个环节的发动者如果在轮到它结算前已经死亡，这个环节失效。
+5. 环节结算时造成的伤害仍然会立即触发 `on_hit`、`on_damaged` 等普通被动，这部分和以前一样。
+
+响应环节的 `trigger_unit` 是它所回应环节的发动者，所以"反击施法者"写 `target => trigger_unit`，"给施法的队友加攻击力"也一样。
+
+```erlang
+%% 对方发动技能时，50% 概率无效它，每回合最多一次
+#{id => 711, name => <<"counter_spell">>, trigger => enemy_activate,
+  chance_bp => 5000, max_triggers_per_round => 1,
+  effects => [#{type => negate}]}.
+
+%% 队友发动技能时，先给施法者加攻击力，技能再用加成后的攻击力结算（联动）
+#{id => 712, name => <<"support">>, trigger => ally_activate,
+  effects => [#{type => add_buff, target => trigger_unit, buff => RallyBuff}]}.
+```
+
+- 没有任何单位带响应被动时，技能和以前完全一样地结算，不多消耗任何随机数，旧请求的结果逐字节不变。
+- 响应触发点只能用在被动上；`negate` 只能出现在响应被动里；Buff Reaction 和 `decrement_on` 不能使用响应触发点。违反时请求返回 `invalid_request`，配置编译器和加载器也会拒绝。
+- `chance_bp` 和 `max_triggers_per_round` 照常生效；被无效的响应仍然计入触发次数。
 
 ## 结果与战报
 
@@ -418,6 +555,43 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
 ```
 
 事件包含严格递增的 `seq`，以及 `round`、`phase`、`type`、`actor`、`target`、`source_id`、`value`、受击前后 HP 和暴击标记。前端可以只依赖事件流播放战报，服务端则以 `units` 和 `winner` 做最终结算。
+
+连锁只有在出现响应时才产生以下事件：
+
+| `type` | `actor` | `target` | `source_id` | `value` |
+|---|---|---|---|---|
+| `chain` | 响应者 | 它回应的单位 | 响应被动 ID | 环节编号（2 起） |
+| `negate` | 无效者 | 被无效环节的发动者 | 被无效的技能或被动 ID | 被无效环节的编号 |
+| `fizzle` | 失效环节的发动者 | 0 | 失效的技能或被动 ID | 环节编号 |
+
+### 紧凑结果
+
+事件列表是结果里最大的部分：一场几万个事件的战斗，会变成几 MB 的 Erlang map；用 NIF 或 Port 时，大部分时间都花在把这些 map 从 C++ 交给 Erlang 上，而不是战斗本身。多数调用方其实用不到这些 map：服务端只按 `winner` 和 `units` 结算，事件原样发给客户端。所以请求里带上 `report` 时，返回的是紧凑结果：
+
+```erlang
+#{battle_id := BattleId, ..., units := [...],   % 和上面相同的字段，只是没有 events
+  report := <<...>>}                             % 编码好的 BattleReport（proto/battle_client.proto）
+```
+
+`report` 决定这段字节描述多少内容：
+
+| `report` | BattleReport 包含 | 示例战斗 | 7v7、48,000 个事件 |
+|---|---|---:|---:|
+| `summary` | 结果和每个单位的最终状态 | 139 B | 407 B |
+| `actions` | 再加每一步一个 `BattleAction`，事件已经汇总 | 1.8 KB | 240 KB |
+| `events` | 再加每个 `BattleEvent` | 4.4 KB | 1.5 MB |
+
+`actions` 里的一步，要么是一个单位的一次行动（从 `action_start` 到 `action_end`：它用的技能、每一下伤害，以及途中触发的每个被动和 Buff 反应），要么是行动之外连续发生的一串触发。每一步按受影响的单位给出伤害、治疗、命中次数、暴击次数、闪避次数、最后的 HP 和是否阵亡，再加上每种被动、Buff 和连锁事件的次数。客户端据此可以逐步回放，一长串被动连锁也只占几条，而不是几千个事件。
+
+这段字节由 C++ 引擎直接写出，交给 Erlang 的结果因此很小；`gamebattle_client:encode_battle_report/2` 原样转发。三种适配器写出的字节完全相同，而且是规范的 protobuf 编码，和 gpb 或任何 protobuf 库对同一条消息编码的结果一致。不带 `report` 的请求，结果和以前完全一样。速度上的变化见 [docs/engine-benchmark.md](docs/engine-benchmark.md)。
+
+## 客户端协议
+
+游戏客户端与服务器之间使用 protobuf，定义在 `proto/battle_client.proto`。`gamebattle_client:encode_battle_report/2` 把上面的结果变成发给客户端的 `ServerMessage`（紧凑结果里的 `report` 字节原样发出），`gamebattle_client:decode_client_message/1` 解码并校验客户端发来的 `ClientMessage`。客户端只提交关卡和阵容，数值全部来自服务器。
+
+帧格式、Erlang 服务端示例、Unity/C# 接入、安全注意事项和兼容规则见 [docs/client-protocol.md](docs/client-protocol.md)。
+
+想直接验证：开启测试网关后，用 [client/](client/README.md) 里的测试客户端打一场看战报，或者按每秒 N 场压测，看这套战斗在你们的负载下能不能扛住。
 
 ## v1 的明确边界
 

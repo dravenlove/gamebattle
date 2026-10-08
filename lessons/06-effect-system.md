@@ -1,5 +1,7 @@
 # 第 6 课：效果系统
 
+**中文** | [English](en/06-effect-system.md)
+
 > 对应文件：`src/effect_system.cpp`（455 行，全项目最复杂）
 
 它负责"一个效果真正落地时发生的所有事"：扣血、加血、挂 Buff、移除 Buff，以及由此引发的被动和 Buff 反应的**连锁触发**。

@@ -1,5 +1,7 @@
 # 第 19 课：epoll 与 TCP 战斗服务器
 
+**中文** | [English](en/19-epoll-battle-server.md)
+
 > 第四部分「网络与游戏服务器」的第一课。实战代码：`practice/battle_tcp_server.cpp`（约 300 行）、`practice/tcp_client.py`。
 >
 > 游戏服务端岗位几乎必考网络编程。这一课把战斗引擎包装成一个独立的 TCP 服务：Linux epoll 事件循环 + 线程池，帧格式和 Erlang Port 一样是 `{packet, 4}`，所以 **Erlang 节点可以直接用 `gen_tcp` 连上来**。

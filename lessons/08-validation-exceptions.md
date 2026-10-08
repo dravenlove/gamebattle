@@ -1,6 +1,8 @@
 # 第 8 课：校验与异常
 
-> 对应文件：`src/battle_state.cpp:97-313`（`validate_request`，**抛出**）、`src/wire.cpp:608-658`（`handle_etf`，**捕获**）
+**中文** | [English](en/08-validation-exceptions.md)
+
+> 对应文件：`src/battle_state.cpp:103-334`（`validate_request`，**抛出**）、`src/wire.cpp:611-661`（`handle_etf`，**捕获**）
 
 ## 1. 全局：错误是怎么一路传回 Erlang 的
 
@@ -132,7 +134,7 @@ public:
 
 ## 7. 异常翻译：捕获、补充上下文、再抛出
 
-`wire.cpp:432-444`：
+`wire.cpp:435-447`：
 
 ```cpp
 try {
@@ -197,7 +199,7 @@ auto depth_of = [&](std::size_t n) { return n == 0 ? 0 : 1 + depth_of(n - 1); };
 // error: use of 'depth_of' before deduction of 'auto'
 ```
 
-编译器要**看完整个 lambda** 才能推断 `depth_of` 的类型，而内部已经要用它了。项目的解决办法（`battle_state.cpp:123-127`）：
+编译器要**看完整个 lambda** 才能推断 `depth_of` 的类型，而内部已经要用它了。项目的解决办法（`battle_state.cpp:129-133`）：
 
 ```cpp
 std::function<void(const Effect&, std::size_t)> validate_effect;                       // ① 先声明，类型写明

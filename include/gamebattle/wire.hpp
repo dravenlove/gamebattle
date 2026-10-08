@@ -2,10 +2,12 @@
 
 #include "gamebattle/config_store.hpp"
 #include "gamebattle/engine.hpp"
+#include "gamebattle/report.hpp"
 #include "gamebattle/term.hpp"
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <shared_mutex>
 #include <span>
 #include <vector>
@@ -15,6 +17,12 @@ namespace gamebattle::wire {
 BattleRequest parse_request(const term::Value& value,
                             const ConfigStore* configs = nullptr);
 term::Value encode_result(const BattleResult& result);
+
+// The request's optional `report` field: summary, actions or events. With it
+// the result has no event maps; it carries `report`, the protobuf
+// BattleReport bytes for clients, instead (see report.hpp).
+std::optional<report::Detail> parse_report_detail(const term::Value& request);
+term::Value encode_compact_result(const BattleResult& result, report::Detail detail);
 
 // Thread-safe process-local endpoint. A successful {load_config, Path} swaps an
 // immutable store atomically from the perspective of new requests; simulations

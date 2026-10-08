@@ -1,5 +1,7 @@
 # 第 10 课：配置管线
 
+**中文** | [English](en/10-config-pipeline.md)
+
 > 对应文件：
 > - 策划表：`config/example/*.csv`、`config/README.md`
 > - 编译器：`tools/config_compiler.cpp`（CSV → `.gbcfg`）
@@ -100,7 +102,7 @@ config error: buff_reactions.csv: add_buff reaction graph contains a cycle
 
 ### 3.2 CSV 解析：一个手写的状态机
 
-`parse_csv`（`config_compiler.cpp:263`）逐个字符扫描，用 `quoted`、`quote_closed` 两个布尔变量记录状态，处理了：
+`parse_csv`（`config_compiler.cpp:272`）逐个字符扫描，用 `quoted`、`quote_closed` 两个布尔变量记录状态，处理了：
 
 - 引号包起来的字段（字段里可以有逗号、换行）；
 - `""` 表示一个字面上的引号；
@@ -139,7 +141,7 @@ C 语言遗留的 `atoi("12a")` 会悄悄返回 12，出错时返回 0，你根�
 const std::unordered_map<std::string, std::uint8_t> kEffectKinds{
     {"damage", std::uint8_t{0}}, {"heal", std::uint8_t{1}},
     {"add_buff", std::uint8_t{2}}, {"remove_buff", std::uint8_t{3}},
-    {"direct_damage", std::uint8_t{4}}
+    {"direct_damage", std::uint8_t{4}}, {"negate", std::uint8_t{5}}
 };
 ```
 
@@ -148,10 +150,10 @@ const std::unordered_map<std::string, std::uint8_t> kEffectKinds{
 > **维护提示**：配置编译器**没有** include `engine.hpp`，两边的数字是人工保持一致的。以后新增一种 `EffectKind`（比如护盾），至少要同时改这几处：
 > 1. `engine.hpp` 的 `enum class`；
 > 2. `config_compiler.cpp` 的 `kEffectKinds` 表；
-> 3. `config_store.cpp` 里 `checked_enum<EffectKind>(reader.u8(), 4, ...)` 的最大值 4；
+> 3. `config_store.cpp` 里 `checked_enum<EffectKind>(reader.u8(), 5, ...)` 的最大值（加入 `negate` 之后是 5）；
 > 4. `wire.cpp` 的 `parse_effect_kind`（内联请求）；
 > 5. `effect_system.cpp` 的 `switch`（漏了会有 `-Wswitch` 警告，第 6 课）；
-> 6. 只要旧版本加载器读不懂新文件，就要提升 `.gbcfg` 的格式版本号。
+> 6. 如果改变了文件布局（新增字段、调整字段顺序），要提升 `.gbcfg` 的格式版本号，否则旧加载器会把字节读错位置。只是给枚举新增取值时可以不升：旧加载器的范围检查（第 4.2 节）会明确报错，不会读错；没用到新取值的文件和以前逐字节相同，新旧加载器都能读。第 25 课加入 `negate` 就是这样处理的。
 
 ### 3.5 确定性输出：`std::map` 与无时间戳
 
@@ -293,7 +295,7 @@ Enum checked_enum(std::uint8_t value, std::uint8_t maximum, const char* field) {
     return static_cast<Enum>(value);
 }
 
-raw.value.kind = checked_enum<EffectKind>(reader.u8(), 4, "effect.kind");
+raw.value.kind = checked_enum<EffectKind>(reader.u8(), 5, "effect.kind");
 ```
 
 C++ 允许把**任意整数** `static_cast` 成枚举，哪怕没有对应的枚举值。比如 `static_cast<EffectKind>(9)` 能编译，也能运行，但第 6 课那个没有 `default` 的 `switch` 不会匹配任何分支，这个效果就会**静悄悄地什么都不做**。所以从外部读进来的数字，必须先检查范围再转换。
@@ -350,7 +352,7 @@ for (auto& [id, buff] : mutable_buffs) {
 
 ### 4.5 环检测：Kahn 拓扑排序
 
-第 2 课讲过：Buff 之间如果形成引用环，`shared_ptr` 永远释放不了。加载器用的是 **Kahn 算法**（`config_store.cpp:467-502`）：
+第 2 课讲过：Buff 之间如果形成引用环，`shared_ptr` 永远释放不了。加载器用的是 **Kahn 算法**（`config_store.cpp:494-529`）：
 
 ```cpp
 std::map<std::uint32_t, std::uint32_t> indegree;                 // 每个 Buff 被多少条边指向
@@ -418,7 +420,7 @@ load_config(Path)
 
 这在 C++ 里叫**强异常保证**（strong exception guarantee）：操作要么完全成功，要么就像从没发生过。
 
-`assign_loadout`（`config_store.cpp:614`）也是同样的写法：先把所有技能、被动查到临时 vector 里，全部查到了才 `std::move` 进 `unit`。只要有一个 ID 不存在，就会在修改 `unit` 之前抛出异常，`unit` 保持原样。
+`assign_loadout`（`config_store.cpp:641`）也是同样的写法：先把所有技能、被动查到临时 vector 里，全部查到了才 `std::move` 进 `unit`。只要有一个 ID 不存在，就会在修改 `unit` 之前抛出异常，`unit` 保持原样。
 
 ### 4.8 两种查询 API
 
@@ -435,7 +437,7 @@ const BuffSpec& require_buff(std::uint32_t id) const;         // 找不到抛 st
 ### 4.9 配置进入战斗：按值复制
 
 ```cpp
-unit.skills.push_back(configs->require_skill(id));   // wire.cpp:435
+unit.skills.push_back(configs->require_skill(id));   // wire.cpp:438
 ```
 
 `require_skill` 返回 `const Skill&`（借用），`push_back` 时**复制**出一份 `Skill` 放进 `unit`。复制 `Skill` 会复制它的 `effects`，复制 `Effect` 会复制里面的 `shared_ptr<const BuffSpec>`，也就是引用计数加 1，而 `BuffSpec` 本身不复制。

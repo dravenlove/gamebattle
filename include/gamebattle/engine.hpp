@@ -32,15 +32,27 @@ enum class Trigger : std::uint8_t {
     on_damaged,
     unit_death,
     after_action,
-    round_end
+    round_end,
+    // Response triggers: only passives can use them, and they fire only while
+    // an active skill's chain is being built (an enemy / an ally other than
+    // the passive's owner just added a chain link).
+    enemy_activate,
+    ally_activate
 };
 enum class EffectKind : std::uint8_t {
     damage = 0,
     heal = 1,
     add_buff = 2,
     remove_buff = 3,
-    direct_damage = 4
+    direct_damage = 4,
+    // Cancels the chain link this response answered. Only valid in passives
+    // with a response trigger.
+    negate = 5
 };
+
+inline constexpr bool is_response_trigger(Trigger trigger) {
+    return trigger == Trigger::enemy_activate || trigger == Trigger::ally_activate;
+}
 enum class Attribute : std::uint8_t {
     attack = 0,
     defense = 1,

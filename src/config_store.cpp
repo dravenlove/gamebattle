@@ -272,11 +272,18 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
     if (!input.eof() && input.fail()) {
         throw std::runtime_error("failed while reading gamebattle config pack");
     }
+    return load_bytes(bytes);
+}
+
+ConfigStore ConfigStore::load_bytes(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() > kMaxPackBytes) {
+        throw std::runtime_error("gamebattle config pack exceeds the 64 MiB limit");
+    }
     if (bytes.size() < kHeaderBytes) {
         throw std::runtime_error("gamebattle config pack is smaller than its header");
     }
 
-    Reader header(std::span<const std::uint8_t>(bytes).first(kHeaderBytes));
+    Reader header(bytes.first(kHeaderBytes));
     if (header.u8() != 'G' || header.u8() != 'B' || header.u8() != 'C' ||
         header.u8() != 'F') {
         throw std::runtime_error("invalid gamebattle config magic");
@@ -293,7 +300,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
     if (payload_size != bytes.size() - kHeaderBytes) {
         throw std::runtime_error("gamebattle config payload length does not match its header");
     }
-    const auto payload = std::span<const std::uint8_t>(bytes).subspan(kHeaderBytes);
+    const auto payload = bytes.subspan(kHeaderBytes);
     if (crc32(payload) != expected_crc) {
         throw std::runtime_error("gamebattle config CRC32 check failed");
     }
@@ -393,7 +400,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
     for (std::uint32_t index = 0; index < effect_count; ++index) {
         RawEffect raw;
         raw.id = reader.u32();
-        raw.value.kind = checked_enum<EffectKind>(reader.u8(), 4, "effect.kind");
+        raw.value.kind = checked_enum<EffectKind>(reader.u8(), 5, "effect.kind");
         raw.value.target = checked_enum<TargetRule>(reader.u8(), 6, "effect.target");
         raw.value.target_count = reader.i32();
         raw.value.attack_bp = reader.i32();
@@ -429,7 +436,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
         RawPassive raw;
         raw.id = reader.u32();
         raw.name = reader.string();
-        raw.trigger = checked_enum<Trigger>(reader.u8(), 8, "passive.trigger");
+        raw.trigger = checked_enum<Trigger>(reader.u8(), 10, "passive.trigger");
         raw.chance_bp = reader.i32();
         raw.max_triggers_per_round = reader.i32();
         raw.effect_ids = read_ids(reader);
@@ -459,6 +466,33 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
             if (!raw_effect_indexes.contains(effect_id)) {
                 throw std::runtime_error("buff reaction references an unknown effect");
             }
+        }
+    }
+
+    // Negate cancels a chain link, so it only makes sense in passives that
+    // answer one. Unknown ids are reported when skills/passives are linked.
+    const auto any_negate = [&](const std::vector<std::uint32_t>& effect_ids) {
+        return std::any_of(effect_ids.begin(), effect_ids.end(), [&](std::uint32_t id) {
+            const auto found = raw_effect_indexes.find(id);
+            return found != raw_effect_indexes.end() &&
+                   raw_effects[found->second].value.kind == EffectKind::negate;
+        });
+    };
+    for (const auto& raw : raw_reactions) {
+        if (is_response_trigger(raw.trigger) || any_negate(raw.effect_ids)) {
+            throw std::runtime_error(
+                "buff reactions cannot use response triggers or negate effects");
+        }
+    }
+    for (const auto& raw : raw_skills) {
+        if (any_negate(raw.effect_ids)) {
+            throw std::runtime_error("skills cannot contain negate effects");
+        }
+    }
+    for (const auto& raw : raw_passives) {
+        if (!is_response_trigger(raw.trigger) && any_negate(raw.effect_ids)) {
+            throw std::runtime_error(
+                "negate effects require an enemy_activate or ally_activate passive");
         }
     }
 
@@ -610,6 +644,25 @@ const Skill& ConfigStore::require_skill(std::uint32_t id) const {
 const Passive& ConfigStore::require_passive(std::uint32_t id) const {
     return require_item(passives_, id, "passive");
 }
+
+namespace {
+
+template <typename T>
+std::vector<std::uint32_t> sorted_ids(const std::unordered_map<std::uint32_t, T>& values) {
+    std::vector<std::uint32_t> ids;
+    ids.reserve(values.size());
+    for (const auto& entry : values) {
+        ids.push_back(entry.first);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+} // namespace
+
+std::vector<std::uint32_t> ConfigStore::buff_ids() const { return sorted_ids(buffs_); }
+std::vector<std::uint32_t> ConfigStore::skill_ids() const { return sorted_ids(skills_); }
+std::vector<std::uint32_t> ConfigStore::passive_ids() const { return sorted_ids(passives_); }
 
 void ConfigStore::assign_loadout(UnitConfig& unit,
                                  std::span<const std::uint32_t> skill_ids,

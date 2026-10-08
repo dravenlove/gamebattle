@@ -1,5 +1,7 @@
 # 第 1 课：用 Erlang 的眼光读领域模型
 
+**中文** | [English](en/01-domain-model.md)
+
 > 对应文件：`include/gamebattle/engine.hpp`
 > 练习代码：`lessons/lesson1.cpp`（可选）
 
@@ -93,7 +95,7 @@ struct Stats {
 
 ## 8. 前向声明 `struct BuffSpec;`
 
-`engine.hpp:92` 有一行孤零零的 `struct BuffSpec;`。它解决的是两件事：**名字要先见过**，**结构体大小编译期要确定**。
+`engine.hpp:104` 有一行孤零零的 `struct BuffSpec;`。它解决的是两件事：**名字要先见过**，**结构体大小编译期要确定**。
 
 ### 先看这三个结构互相引用成什么样
 
@@ -155,7 +157,7 @@ sizeof(Effect)      = 24   int(4) + 对齐填充(4) + shared_ptr(16)
 
 所以项目里凡是真正读 `BuffSpec` 内容的代码，都写在 `.cpp` 里。到那时 `BuffSpec` 早就是完整类型了。
 
-`engine.hpp:92-120` 的顺序是唯一可行的排法：环上必须有一条边是指针，前向声明放在这条边之前。
+`engine.hpp:104-132` 的顺序是唯一可行的排法：环上必须有一条边是指针，前向声明放在这条边之前。
 
 ```cpp
 struct BuffSpec;                  // ① 先声明名字
@@ -202,13 +204,13 @@ g++ -std=c++20 -Wall -Wextra -Wpedantic lessons/lesson1.cpp -o lesson1 && ./less
 1. `std::int32_t max_rounds{50.5};` 报错 `narrowing conversion`。这就是用 `{}` 的好处；换成 `= 50.5` 会被悄悄截断成 50。
 2. `std::cout << Side::attacker;` 报错 `no match for 'operator<<'`，因为 enum class 不会自动转成整数。
 3. `P{.y = 1, .x = 2}` 报错 `designator order ... does not match declaration order`。
-4. 用 `-Wextra` 编译时，指定初始化省略了**没有默认成员初始值**的字段（比如没写 `{}` 的 `std::string`、`std::vector`、`std::optional`），会触发 `missing initializer` 警告；写了默认值的字段（如 `int rounds{0};`）省略了不会警告。练习代码里显式写 `.forced_first_side = std::nullopt` 就是为此。项目自己也有一处：构建时会看到 `battle_state.cpp:361: warning: missing initializer for member 'BattleResult::reason'`。省略的字段照样会被正常初始化，这个警告无害，但你要能读懂它（第 11 课第 4 节）。
+4. 用 `-Wextra` 编译时，指定初始化省略了**没有默认成员初始值**的字段（比如没写 `{}` 的 `std::string`、`std::vector`、`std::optional`），会触发 `missing initializer` 警告；写了默认值的字段（如 `int rounds{0};`）省略了不会警告。练习代码里显式写 `.forced_first_side = std::nullopt` 就是为此。项目自己也有一处：构建时会看到 `battle_state.cpp:382: warning: missing initializer for member 'BattleResult::reason'`。省略的字段照样会被正常初始化，这个警告无害，但你要能读懂它（第 11 课第 4 节）。
 
 ## 可选练习
 
-1. 加上 `enum class Trigger`（9 个挂点，照抄 `engine.hpp:26`）和 `struct Passive`，给 `UnitConfig` 加 `std::vector<Passive> passives;`。
+1. 加上 `enum class Trigger`（照抄 `engine.hpp:26`，共 11 个挂点）和 `struct Passive`，给 `UnitConfig` 加 `std::vector<Passive> passives;`。
 2. 写一个 `const char* to_string(Side side)`，用 `switch` 实现；故意删掉一个 case，看 `-Wall` 说什么。
-3. 思考：为什么 `hp` 用 `int64`，而 `crit_rate_bp` 用 `int32`？（提示：看 `battle_state.cpp:241-256` 的数值上限。）
+3. 思考：为什么 `hp` 用 `int64`，而 `crit_rate_bp` 用 `int32`？（提示：看 `battle_state.cpp:253-268` 的数值上限。）
 
 ## 小结
 
