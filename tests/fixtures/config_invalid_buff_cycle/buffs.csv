@@ -1,2 +1,2 @@
-id,name,lifetime,duration,decrement_on,max_stacks,stack_policy,refresh_policy,notes
-801,自循环Buff,finite,1,round_end,1,refresh,reset,用于验证reaction的add_buff环检测
+id,name,lifetime,duration,decrement_on,max_stacks,stack_key,stack_policy,refresh_policy,notes
+801,自循环Buff,finite,1,round_end,1,by_buff,refresh,reset,用于验证reaction的add_buff环检测

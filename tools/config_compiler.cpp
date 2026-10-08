@@ -28,7 +28,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::uint16_t kFormatMajor = 2;
+constexpr std::uint16_t kFormatMajor = 3;
 constexpr std::uint16_t kFormatMinor = 0;
 constexpr std::size_t kMaxTableBytes = 64U * 1024U * 1024U;
 constexpr std::size_t kMaxStringBytes = 1024U * 1024U;
@@ -56,6 +56,7 @@ struct BuffRow {
     std::int32_t duration{1};
     std::uint8_t decrement_on{8};
     std::int32_t max_stacks{1};
+    std::uint8_t stack_key{0};
     std::uint8_t stack_policy{0};
     std::uint8_t refresh_policy{0};
 };
@@ -71,6 +72,7 @@ struct ModifierRow {
 struct ReactionRow {
     std::uint32_t buff_id{0};
     std::uint32_t sequence{0};
+    std::int32_t priority{0};
     std::uint8_t trigger{8};
     std::uint8_t source{0};
     std::uint8_t stack_scaling{0};
@@ -104,6 +106,7 @@ struct PassiveRow {
     std::uint32_t id{0};
     std::string name;
     std::uint8_t trigger{0};
+    std::int32_t priority{0};
     std::int32_t chance_bp{10000};
     std::int32_t max_triggers_per_round{0};
     std::vector<std::uint32_t> effect_ids;
@@ -146,6 +149,11 @@ const std::unordered_map<std::string, std::uint8_t> kLifetimes{
 
 const std::unordered_map<std::string, std::uint8_t> kStackPolicies{
     {"stack", std::uint8_t{0}}, {"refresh", std::uint8_t{1}}
+};
+
+const std::unordered_map<std::string, std::uint8_t> kStackKeyPolicies{
+    {"by_buff", std::uint8_t{0}},
+    {"by_buff_and_source", std::uint8_t{1}}
 };
 
 const std::unordered_map<std::string, std::uint8_t> kRefreshPolicies{
@@ -362,15 +370,17 @@ std::vector<CsvRecord> parse_csv(const fs::path& path) {
 std::vector<std::string> expected_columns(std::string_view filename) {
     if (filename == "buffs.csv") {
         return {"id", "name", "lifetime", "duration", "decrement_on",
-                "max_stacks", "stack_policy", "refresh_policy", "notes"};
+                "max_stacks", "stack_key", "stack_policy", "refresh_policy",
+                "notes"};
     }
     if (filename == "buff_modifiers.csv") {
         return {"buff_id", "sequence", "attribute", "operation", "value",
                 "notes"};
     }
     if (filename == "buff_reactions.csv") {
-        return {"buff_id", "sequence", "trigger", "source", "stack_scaling",
-                "chance_bp", "max_triggers_per_round", "effect_ids", "notes"};
+        return {"buff_id", "sequence", "priority", "trigger", "source",
+                "stack_scaling", "chance_bp", "max_triggers_per_round",
+                "effect_ids", "notes"};
     }
     if (filename == "effects.csv") {
         return {"id", "type", "target", "target_count", "attack_bp", "flat",
@@ -379,8 +389,8 @@ std::vector<std::string> expected_columns(std::string_view filename) {
     if (filename == "skills.csv") {
         return {"id", "name", "chance_bp", "priority", "effect_ids", "notes"};
     }
-    return {"id", "name", "trigger", "chance_bp", "max_triggers_per_round",
-            "effect_ids", "notes"};
+    return {"id", "name", "trigger", "priority", "chance_bp",
+            "max_triggers_per_round", "effect_ids", "notes"};
 }
 
 std::vector<Row> read_rows(const fs::path& directory, std::string filename) {
@@ -543,6 +553,7 @@ Tables parse_tables(const fs::path& directory) {
         buff.decrement_on = enum_value(row, "decrement_on", kTriggers);
         buff.max_stacks = static_cast<std::int32_t>(bounded(
             row, "max_stacks", integer(row, "max_stacks", 1), 1, 1000));
+        buff.stack_key = enum_value(row, "stack_key", kStackKeyPolicies);
         buff.stack_policy = enum_value(row, "stack_policy", kStackPolicies);
         buff.refresh_policy = enum_value(row, "refresh_policy", kRefreshPolicies);
         if (buff.permanent && buff.duration != 0) {
@@ -593,6 +604,8 @@ Tables parse_tables(const fs::path& directory) {
             std::numeric_limits<std::uint32_t>::max()));
         reaction.sequence = static_cast<std::uint32_t>(bounded(
             row, "sequence", integer(row, "sequence", 0, false), 1, 4096));
+        reaction.priority = static_cast<std::int32_t>(bounded(
+            row, "priority", integer(row, "priority", 0), -1'000'000, 1'000'000));
         reaction.trigger = enum_value(row, "trigger", kTriggers);
         reaction.source = enum_value(row, "source", kEffectSources);
         reaction.stack_scaling =
@@ -740,6 +753,8 @@ Tables parse_tables(const fs::path& directory) {
             std::numeric_limits<std::uint32_t>::max()));
         passive.name = required_text(row, "name");
         passive.trigger = enum_value(row, "trigger", kTriggers);
+        passive.priority = static_cast<std::int32_t>(bounded(
+            row, "priority", integer(row, "priority", 0), -1'000'000, 1'000'000));
         passive.chance_bp = static_cast<std::int32_t>(bounded(
             row, "chance_bp", integer(row, "chance_bp", 10000), 0, 10000));
         passive.max_triggers_per_round = static_cast<std::int32_t>(bounded(
@@ -827,6 +842,7 @@ std::vector<std::uint8_t> build_pack(const Tables& tables) {
         append_i32(payload, buff.duration);
         append_u8(payload, buff.decrement_on);
         append_i32(payload, buff.max_stacks);
+        append_u8(payload, buff.stack_key);
         append_u8(payload, buff.stack_policy);
         append_u8(payload, buff.refresh_policy);
     }
@@ -842,6 +858,7 @@ std::vector<std::uint8_t> build_pack(const Tables& tables) {
         static_cast<void>(key);
         append_u32(payload, reaction.buff_id);
         append_u32(payload, reaction.sequence);
+        append_i32(payload, reaction.priority);
         append_u8(payload, reaction.trigger);
         append_u8(payload, reaction.source);
         append_u8(payload, reaction.stack_scaling);
@@ -870,6 +887,7 @@ std::vector<std::uint8_t> build_pack(const Tables& tables) {
         append_u32(payload, id);
         append_string(payload, passive.name);
         append_u8(payload, passive.trigger);
+        append_i32(payload, passive.priority);
         append_i32(payload, passive.chance_bp);
         append_i32(payload, passive.max_triggers_per_round);
         append_ids(payload, passive.effect_ids);

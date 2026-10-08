@@ -57,6 +57,15 @@ enum class StackPolicy : std::uint8_t { stack = 0, refresh = 1 };
 enum class RefreshPolicy : std::uint8_t { reset = 0, extend = 1, keep = 2 };
 enum class EffectSource : std::uint8_t { owner = 0, applier = 1 };
 enum class StackScaling : std::uint8_t { once = 0, per_stack = 1 };
+enum class StackKeyPolicy : std::uint8_t {
+    by_buff = 0,
+    by_buff_and_source = 1
+};
+enum class EventLogLevel : std::uint8_t {
+    result_only = 0,
+    summary = 1,
+    full = 2
+};
 
 struct Stats {
     std::int64_t hp{1};
@@ -87,6 +96,7 @@ struct StackingPolicy {
     std::int32_t max_stacks{1};
     StackPolicy mode{StackPolicy::stack};
     RefreshPolicy refresh{RefreshPolicy::reset};
+    StackKeyPolicy key{StackKeyPolicy::by_buff};
 };
 
 struct BuffSpec;
@@ -103,6 +113,7 @@ struct Effect {
 
 struct BuffReaction {
     Trigger trigger{Trigger::round_end};
+    std::int32_t priority{0};
     EffectSource source{EffectSource::owner};
     StackScaling stack_scaling{StackScaling::once};
     BasisPoints chance_bp{10000};
@@ -131,6 +142,7 @@ struct Passive {
     std::uint32_t id{0};
     std::string name;
     Trigger trigger{Trigger::on_damaged};
+    std::int32_t priority{0};
     BasisPoints chance_bp{10000};
     std::int32_t max_triggers_per_round{0};
     std::vector<Effect> effects;
@@ -176,7 +188,9 @@ struct BattleRequest {
     std::uint64_t battle_id{0};
     std::uint64_t seed{1};
     std::int32_t max_rounds{50};
-    std::int32_t max_events{10000};
+    std::int32_t max_execution_steps{100000};
+    std::int32_t max_logged_events{10000};
+    EventLogLevel event_log_level{EventLogLevel::full};
     Formation attacker;
     Formation defender;
     BattleInitialConditions initial_conditions;
@@ -184,6 +198,9 @@ struct BattleRequest {
 
 struct Event {
     std::uint32_t seq{0};
+    std::uint64_t event_id{0};
+    std::uint64_t parent_event_id{0};
+    std::uint32_t depth{0};
     std::int32_t round{0};
     std::string phase;
     std::string type;
@@ -195,6 +212,17 @@ struct Event {
     std::int64_t hp_before{0};
     std::int64_t hp_after{0};
     bool critical{false};
+};
+
+struct CombatEventContext {
+    std::uint64_t event_id{0};
+    std::uint64_t parent_event_id{0};
+    std::uint32_t depth{0};
+    Trigger trigger{Trigger::battle_start};
+    UnitId source{0};
+    UnitId target{0};
+    UnitId subject{0};
+    std::uint32_t source_id{0};
 };
 
 struct UnitResult {
@@ -217,6 +245,10 @@ struct BattleResult {
     std::int32_t rounds{0};
     std::uint64_t attacker_initiative{0};
     std::uint64_t defender_initiative{0};
+    std::uint64_t execution_steps{0};
+    std::uint64_t total_event_count{0};
+    std::uint64_t logged_event_count{0};
+    bool events_truncated{false};
     std::vector<Event> events;
     std::vector<UnitResult> units;
 };

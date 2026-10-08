@@ -3,12 +3,15 @@
 -export([run/3, run/4]).
 
 -type adapter() :: port | nif.
+-type log_level() :: result_only | summary | full.
 -type wave() :: #{
     battle_id := non_neg_integer(),
     seed := non_neg_integer(),
     defender := map(),
     max_rounds => pos_integer(),
-    max_events => pos_integer(),
+    max_execution_steps => pos_integer(),
+    max_logged_events => non_neg_integer(),
+    log_level => log_level(),
     first_side => automatic | attacker | defender
 }.
 -type result() :: {ok, map()} | {error, map()}.
@@ -57,7 +60,21 @@ run_waves(Adapter, Attacker, [Wave | Remaining], Options, Carryover, Index, Tota
         battle_id => maps:get(battle_id, Wave),
         seed => maps:get(seed, Wave),
         max_rounds => maps:get(max_rounds, Wave, maps:get(max_rounds, Options, 50)),
-        max_events => maps:get(max_events, Wave, maps:get(max_events, Options, 10000)),
+        max_execution_steps => maps:get(
+            max_execution_steps,
+            Wave,
+            maps:get(max_execution_steps, Options, 100000)
+        ),
+        max_logged_events => maps:get(
+            max_logged_events,
+            Wave,
+            maps:get(max_logged_events, Options, 10000)
+        ),
+        log_level => maps:get(
+            log_level,
+            Wave,
+            maps:get(log_level, Options, full)
+        ),
         attacker => Attacker,
         defender => maps:get(defender, Wave),
         initial_conditions => InitialConditions
@@ -162,14 +179,21 @@ validate_waves([Wave | Remaining], Index, SeenIds) when is_map(Wave) ->
     Defender = maps:get(defender, Wave, invalid),
     FirstSide = maps:get(first_side, Wave, automatic),
     MaxRounds = maps:get(max_rounds, Wave, 50),
-    MaxEvents = maps:get(max_events, Wave, 10000),
+    MaxExecutionSteps = maps:get(max_execution_steps, Wave, 100000),
+    MaxLoggedEvents = maps:get(max_logged_events, Wave, 10000),
+    LogLevel = maps:get(log_level, Wave, full),
     Valid = is_integer(BattleId) andalso BattleId >= 0 andalso
             is_integer(Seed) andalso Seed >= 0 andalso
             is_map(Defender) andalso
             (FirstSide =:= automatic orelse FirstSide =:= attacker orelse
              FirstSide =:= defender) andalso
             is_integer(MaxRounds) andalso MaxRounds > 0 andalso
-            is_integer(MaxEvents) andalso MaxEvents > 0,
+            is_integer(MaxExecutionSteps) andalso
+            MaxExecutionSteps >= 100 andalso MaxExecutionSteps =< 10000000 andalso
+            is_integer(MaxLoggedEvents) andalso
+            MaxLoggedEvents >= 0 andalso MaxLoggedEvents =< 1000000 andalso
+            (LogLevel =:= result_only orelse LogLevel =:= summary orelse
+             LogLevel =:= full),
     case Valid of
         false ->
             {error, #{type => invalid_wave, wave_index => Index}};

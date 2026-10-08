@@ -107,6 +107,7 @@ struct RawModifier {
 struct RawReaction {
     std::uint32_t buff_id{0};
     std::uint32_t sequence{0};
+    std::int32_t priority{0};
     Trigger trigger{Trigger::round_end};
     EffectSource source{EffectSource::owner};
     StackScaling stack_scaling{StackScaling::once};
@@ -127,6 +128,7 @@ struct RawPassive {
     std::uint32_t id{0};
     std::string name;
     Trigger trigger{Trigger::on_damaged};
+    std::int32_t priority{0};
     BasisPoints chance_bp{10000};
     std::int32_t max_triggers_per_round{0};
     std::vector<std::uint32_t> effect_ids;
@@ -203,7 +205,8 @@ void validate_modifier(const RawModifier& modifier) {
 
 void validate_reaction(const RawReaction& reaction) {
     if (reaction.buff_id == 0 || reaction.sequence == 0 ||
-        reaction.sequence > kMaxReferences || reaction.chance_bp < 0 ||
+        reaction.sequence > kMaxReferences || reaction.priority < -1'000'000 ||
+        reaction.priority > 1'000'000 || reaction.chance_bp < 0 ||
         reaction.chance_bp > 10000 || reaction.max_triggers_per_round < 0 ||
         reaction.max_triggers_per_round > 10000 || reaction.effect_ids.empty()) {
         throw std::runtime_error("buff reaction fields are outside supported bounds");
@@ -329,6 +332,8 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
         buff->lifetime.decrement_on =
             checked_enum<Trigger>(reader.u8(), 8, "buff.lifetime.decrement_on");
         buff->stacking.max_stacks = reader.i32();
+        buff->stacking.key = checked_enum<StackKeyPolicy>(
+            reader.u8(), 1, "buff.stacking.key");
         buff->stacking.mode =
             checked_enum<StackPolicy>(reader.u8(), 1, "buff.stacking.mode");
         buff->stacking.refresh = checked_enum<RefreshPolicy>(
@@ -367,6 +372,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
         RawReaction raw;
         raw.buff_id = reader.u32();
         raw.sequence = reader.u32();
+        raw.priority = reader.i32();
         raw.trigger =
             checked_enum<Trigger>(reader.u8(), 8, "buff_reaction.trigger");
         raw.source = checked_enum<EffectSource>(
@@ -430,11 +436,13 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
         raw.id = reader.u32();
         raw.name = reader.string();
         raw.trigger = checked_enum<Trigger>(reader.u8(), 8, "passive.trigger");
+        raw.priority = reader.i32();
         raw.chance_bp = reader.i32();
         raw.max_triggers_per_round = reader.i32();
         raw.effect_ids = read_ids(reader);
         if (raw.id == 0 || raw.name.empty() || raw.chance_bp < 0 ||
-            raw.chance_bp > 10000 || raw.max_triggers_per_round < 0 ||
+            raw.chance_bp > 10000 || raw.priority < -1'000'000 ||
+            raw.priority > 1'000'000 || raw.max_triggers_per_round < 0 ||
             raw.max_triggers_per_round > 10000) {
             throw std::runtime_error("passive fields are outside supported bounds");
         }
@@ -527,6 +535,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
     for (const auto& raw : raw_reactions) {
         BuffReaction reaction;
         reaction.trigger = raw.trigger;
+        reaction.priority = raw.priority;
         reaction.source = raw.source;
         reaction.stack_scaling = raw.stack_scaling;
         reaction.chance_bp = raw.chance_bp;
@@ -564,6 +573,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
         passive.id = raw.id;
         passive.name = std::move(raw.name);
         passive.trigger = raw.trigger;
+        passive.priority = raw.priority;
         passive.chance_bp = raw.chance_bp;
         passive.max_triggers_per_round = raw.max_triggers_per_round;
         passive.effects.reserve(raw.effect_ids.size());

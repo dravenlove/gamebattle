@@ -15,7 +15,7 @@ namespace gamebattle {
 // concurrent battles; UnitConfig receives value snapshots through assign_loadout.
 class ConfigStore final {
 public:
-    static constexpr std::uint16_t format_major = 2;
+    static constexpr std::uint16_t format_major = 3;
     static constexpr std::uint16_t format_minor = 0;
 
     static ConfigStore load_file(const std::filesystem::path& path);
