@@ -28,6 +28,7 @@ practice_program(battle_thread_pool battle_thread_pool.cpp)
 practice_program(battle_bench battle_bench.cpp)
 practice_program(encode_bench encode_bench.cpp)
 practice_program(term_fuzz term_fuzz.cpp)
+practice_program(known_issues known_issues.cpp)
 
 if(NOT WIN32)
     practice_program(battle_tcp_server battle_tcp_server.cpp)

@@ -9,8 +9,10 @@
 | `battle_bench` | 21 | 测量完整链路各阶段耗时（解码 / 解析 / 模拟 / 编码） |
 | `encode_bench` | 21 | 三种结果编码方式的对比实验，先验证输出逐字节相同再计时 |
 | `term_fuzz` | 22 | ETF 入口的模糊测试（兼容 libFuzzer 的入口 + 自带变异驱动） |
+| `known_issues` | 22 | 复现课程中发现的引擎问题，并报告每个问题是否已修复（修复后的回归检查） |
+| `ds_rank_test` / `ds_timers` / `ds_aoi` / `ds_consistent_hash` / `ds_aos_soa` | 20 | 跳表排行榜、时间轮、九宫格 AOI、一致性哈希、AoS/SoA，都带正确性校验 |
 
-辅助文件：`sample_battle.hpp`（5v5 示例战斗）、`request_codec.hpp`（`BattleRequest` → ETF）、`thread_pool.hpp`、`result_hash.hpp`、`tcp_client.py`（TCP 服务器的测试客户端）。
+辅助文件：`sample_battle.hpp`（5v5 示例战斗）、`request_codec.hpp`（`BattleRequest` → ETF）、`direct_encode.hpp`（流式结果编码器）、`thread_pool.hpp`、`result_hash.hpp`、`tcp_client.py`（TCP 服务器的测试客户端）、`ds/ranklist.hpp`（跳表）。
 
 ## 构建
 

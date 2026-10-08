@@ -3,6 +3,7 @@
 //   battle_bench [iterations]
 //   battle_bench --dump-request FILE      write the sample request as ETF bytes
 
+#include "direct_encode.hpp"
 #include "request_codec.hpp"
 #include "sample_battle.hpp"
 
@@ -10,6 +11,7 @@
 #include "gamebattle/term.hpp"
 #include "gamebattle/wire.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -102,5 +104,26 @@ int main(int argc, char** argv) {
     std::cout << "\nsimulate: " << simulate.total_ns / static_cast<double>(events)
               << " ns/event, single-thread throughput "
               << 1e9 * iterations / total_ns << " battles/s (full path)\n";
+
+    // Same full path, but the reply is written by the streaming encoder (lesson 21).
+    for (std::size_t index = 0; index < std::min<std::size_t>(100, encoded.size()); ++index) {
+        const auto result = gamebattle::Engine{}.simulate(
+            gamebattle::wire::parse_request(gamebattle::term::decode(encoded[index])));
+        if (practice::encode_result_direct(result) !=
+            gamebattle::term::encode(gamebattle::wire::encode_result(result))) {
+            std::cerr << "streaming encoder output differs on battle " << index << '\n';
+            return 1;
+        }
+    }
+    const auto start = Clock::now();
+    for (const auto& bytes : encoded) {
+        const auto result = gamebattle::Engine{}.simulate(
+            gamebattle::wire::parse_request(gamebattle::term::decode(bytes)));
+        g_sink = g_sink + practice::encode_result_direct(result).size();
+    }
+    const double streaming_ns = ns_since(start);
+    std::cout << "with streaming encoder (byte-identical on first 100 battles): "
+              << streaming_ns / iterations / 1000.0 << " us/battle, "
+              << 1e9 * iterations / streaming_ns << " battles/s, x" << total_ns / streaming_ns << '\n';
     return 0;
 }
