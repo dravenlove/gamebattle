@@ -47,6 +47,7 @@
 - `src/effect_system.cpp`：技能、伤害、被动与 Buff 效果系统。
 - `src/battle_runtime.hpp`：上述运行时组件之间的内部接口。
 - `src/term.cpp`：无第三方依赖的 Erlang External Term Format 子集编解码。
+- `src/report.cpp`：为紧凑结果写出发给客户端的 protobuf 战报，包括按行动聚合；`erlang/src/gamebattle_report.erl` 是它的 Erlang 版。
 - `src/port_main.cpp`：`{packet, 4}` Port 可执行程序。
 - `src/nif.cpp`：dirty CPU NIF 适配器。
 - `erlang/src/gamebattle_port.erl`：受监督、串行化请求的 Port worker。
@@ -349,6 +350,7 @@ application:ensure_all_started(gamebattle),
 | `max_events` | 最大事件数，默认 10000，防止被动循环无限放大 |
 | `attacker`, `defender` | 双方布阵 map |
 | `initial_conditions` | 可选的本场运行时初值；未指定的对象默认满血 |
+| `report` | 可选：`summary`、`actions` 或 `events`。设置后，结果不再带事件列表，而是带上发给客户端的 protobuf 战报，见[紧凑结果](#紧凑结果) |
 
 布阵结构：
 
@@ -561,9 +563,30 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
 | `negate` | 无效者 | 被无效环节的发动者 | 被无效的技能或被动 ID | 被无效环节的编号 |
 | `fizzle` | 失效环节的发动者 | 0 | 失效的技能或被动 ID | 环节编号 |
 
+### 紧凑结果
+
+事件列表是结果里最大的部分：一场几万个事件的战斗，会变成几 MB 的 Erlang map；用 NIF 或 Port 时，大部分时间都花在把这些 map 从 C++ 交给 Erlang 上，而不是战斗本身。多数调用方其实用不到这些 map：服务端只按 `winner` 和 `units` 结算，事件原样发给客户端。所以请求里带上 `report` 时，返回的是紧凑结果：
+
+```erlang
+#{battle_id := BattleId, ..., units := [...],   % 和上面相同的字段，只是没有 events
+  report := <<...>>}                             % 编码好的 BattleReport（proto/battle_client.proto）
+```
+
+`report` 决定这段字节描述多少内容：
+
+| `report` | BattleReport 包含 | 示例战斗 | 7v7、48,000 个事件 |
+|---|---|---:|---:|
+| `summary` | 结果和每个单位的最终状态 | 139 B | 407 B |
+| `actions` | 再加每一步一个 `BattleAction`，事件已经汇总 | 1.8 KB | 240 KB |
+| `events` | 再加每个 `BattleEvent` | 4.4 KB | 1.5 MB |
+
+`actions` 里的一步，要么是一个单位的一次行动（从 `action_start` 到 `action_end`：它用的技能、每一下伤害，以及途中触发的每个被动和 Buff 反应），要么是行动之外连续发生的一串触发。每一步按受影响的单位给出伤害、治疗、命中次数、暴击次数、闪避次数、最后的 HP 和是否阵亡，再加上每种被动、Buff 和连锁事件的次数。客户端据此可以逐步回放，一长串被动连锁也只占几条，而不是几千个事件。
+
+这段字节由 C++ 引擎直接写出，交给 Erlang 的结果因此很小；`gamebattle_client:encode_battle_report/2` 原样转发。三种适配器写出的字节完全相同，而且是规范的 protobuf 编码，和 gpb 或任何 protobuf 库对同一条消息编码的结果一致。不带 `report` 的请求，结果和以前完全一样。速度上的变化见 [docs/engine-benchmark.md](docs/engine-benchmark.md)。
+
 ## 客户端协议
 
-游戏客户端与服务器之间使用 protobuf，定义在 `proto/battle_client.proto`。`gamebattle_client:encode_battle_report/2` 把上面的结果编码成发给客户端的 `ServerMessage`，`gamebattle_client:decode_client_message/1` 解码并校验客户端发来的 `ClientMessage`。客户端只提交关卡和阵容，数值全部来自服务器。
+游戏客户端与服务器之间使用 protobuf，定义在 `proto/battle_client.proto`。`gamebattle_client:encode_battle_report/2` 把上面的结果变成发给客户端的 `ServerMessage`（紧凑结果里的 `report` 字节原样发出），`gamebattle_client:decode_client_message/1` 解码并校验客户端发来的 `ClientMessage`。客户端只提交关卡和阵容，数值全部来自服务器。
 
 帧格式、Erlang 服务端示例、Unity/C# 接入、安全注意事项和兼容规则见 [docs/client-protocol.md](docs/client-protocol.md)。
 

@@ -5,7 +5,9 @@
 %% frame is a 4-byte length plus one message, a ClientMessage in and a
 %% ServerMessage out. start_battle requests become battles through
 %% gamebattle_demo and run in gamebattle_pool, so replies may come back in any
-%% order; request_id pairs them up.
+%% order; request_id pairs them up. The engine writes the BattleReport bytes
+%% itself, with the detail the client asked for (the `report` request option),
+%% and they go out as they are.
 %%
 %% It is for trying the protocol and load-testing with client/: a real game
 %% builds battles from its own player data. Off unless gateway_port (or
@@ -157,14 +159,12 @@ request(Frame, Socket, Engine) ->
 
 %% Runs in a pool process; returns the encoded ServerMessage.
 -spec battle(non_neg_integer(), map(), engine()) -> binary().
-battle(RequestId, #{stage_id := StageId, lineup := Lineup, summary_only := SummaryOnly}, Engine) ->
+battle(RequestId, #{stage_id := StageId, lineup := Lineup, detail := Detail}, Engine) ->
     try gamebattle_demo:request(StageId, Lineup, rand:uniform(1 bsl 62) - 1) of
         {error, Message} ->
             gamebattle_client:encode_error(RequestId, invalid_request, Message);
         {ok, Battle} ->
-            case gamebattle:simulate(Engine, Battle) of
-                {ok, Result} when SummaryOnly ->
-                    gamebattle_client:encode_battle_report(RequestId, Result#{events := []});
+            case gamebattle:simulate(Engine, Battle#{report => Detail}) of
                 {ok, Result} ->
                     gamebattle_client:encode_battle_report(RequestId, Result);
                 {error, Error} ->

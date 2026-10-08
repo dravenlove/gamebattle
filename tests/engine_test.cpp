@@ -1,4 +1,5 @@
 #include "gamebattle/engine.hpp"
+#include "gamebattle/report.hpp"
 #include "gamebattle/term.hpp"
 #include "gamebattle/wire.hpp"
 
@@ -922,6 +923,146 @@ void test_wire_parses_chain_names() {
     assert(find_event(result, "negate", 6001) != nullptr);
 }
 
+// A minimal protobuf reader for checking report::encode: every field of one
+// message as (number, varint value or nested bytes).
+struct ProtoField {
+    std::uint32_t number;
+    std::uint64_t value;
+    std::string bytes;
+};
+
+std::vector<ProtoField> read_proto(const std::string& data) {
+    std::vector<ProtoField> fields;
+    std::size_t at = 0;
+    const auto varint = [&] {
+        std::uint64_t value = 0;
+        for (int shift = 0;; shift += 7) {
+            assert(at < data.size() && shift < 64);
+            const auto byte = static_cast<std::uint8_t>(data[at++]);
+            value |= static_cast<std::uint64_t>(byte & 0x7F) << shift;
+            if ((byte & 0x80) == 0) {
+                return value;
+            }
+        }
+    };
+    std::uint32_t last = 0;
+    while (at < data.size()) {
+        const auto key = varint();
+        const auto number = static_cast<std::uint32_t>(key >> 3);
+        assert(number >= last);  // canonical: fields in number order
+        last = number;
+        if ((key & 7) == 0) {
+            const auto value = varint();
+            assert(value != 0);  // canonical: zero values left out
+            fields.push_back({number, value, {}});
+        } else {
+            assert((key & 7) == 2);
+            const auto size = static_cast<std::size_t>(varint());
+            assert(at + size <= data.size());
+            fields.push_back({number, 0, data.substr(at, size)});
+            at += size;
+        }
+    }
+    return fields;
+}
+
+std::uint64_t proto_value(const std::vector<ProtoField>& fields, std::uint32_t number) {
+    for (const auto& field : fields) {
+        if (field.number == number) {
+            return field.value;
+        }
+    }
+    return 0;
+}
+
+std::size_t proto_count(const std::vector<ProtoField>& fields, std::uint32_t number) {
+    std::size_t count = 0;
+    for (const auto& field : fields) {
+        count += field.number == number ? 1 : 0;
+    }
+    return count;
+}
+
+void test_report_encoding() {
+    using gamebattle::report::Detail;
+    const auto result = gamebattle::Engine{}.simulate(sample_request());
+
+    const auto summary = read_proto(gamebattle::report::encode(result, Detail::summary));
+    assert(proto_value(summary, 1) == result.battle_id);
+    assert(proto_value(summary, 2) == result.seed);
+    assert(proto_value(summary, 6) == static_cast<std::uint64_t>(result.rounds));
+    assert(proto_count(summary, 9) == result.units.size());
+    assert(proto_count(summary, 10) == 0 && proto_count(summary, 11) == 0);
+
+    const auto events = read_proto(gamebattle::report::encode(result, Detail::events));
+    assert(proto_count(events, 10) == result.events.size());
+    assert(proto_count(events, 11) == 0);
+
+    std::int64_t damage = 0;
+    std::uint64_t hits = 0;
+    std::size_t action_starts = 0;
+    for (const auto& event : result.events) {
+        if (event.type == "damage" || event.type == "direct_damage") {
+            damage += event.value;
+            ++hits;
+        }
+        action_starts += event.type == "action_start" ? 1 : 0;
+    }
+
+    const auto actions = read_proto(gamebattle::report::encode(result, Detail::actions));
+    assert(proto_count(actions, 10) == 0);
+    std::uint64_t counted = 0;
+    std::int64_t summed_damage = 0;
+    std::uint64_t summed_hits = 0;
+    std::size_t unit_actions = 0;
+    for (const auto& field : actions) {
+        if (field.number != 11) {
+            continue;
+        }
+        const auto action = read_proto(field.bytes);
+        counted += proto_value(action, 8);
+        unit_actions += proto_value(action, 4) != 0 ? 1 : 0;
+        for (const auto& change : action) {
+            if (change.number == 6) {
+                const auto unit = read_proto(change.bytes);
+                summed_damage += static_cast<std::int64_t>(proto_value(unit, 2));
+                summed_hits += proto_value(unit, 4);
+            }
+        }
+    }
+    assert(counted == result.events.size());
+    assert(summed_damage == damage);
+    assert(summed_hits == hits);
+    assert(unit_actions == action_starts);
+    assert(proto_count(actions, 11) < result.events.size());
+
+    // Through the wire: `report` replaces the event maps with these bytes.
+    using gamebattle::term::Value;
+    const auto encoded = gamebattle::term::encode(
+        gamebattle::wire::encode_compact_result(result, Detail::actions));
+    const auto compact = gamebattle::term::decode(encoded);
+    assert(gamebattle::term::find(compact, "events") == nullptr);
+    assert(gamebattle::term::get_string(compact, "report") ==
+           gamebattle::report::encode(result, Detail::actions));
+    const auto full = gamebattle::term::encode(gamebattle::wire::encode_result(result));
+    assert(encoded.size() * 4 < full.size());
+
+    const auto detail = [](Value report) {
+        return gamebattle::wire::parse_report_detail(
+            Value::object({{"report", std::move(report)}}));
+    };
+    assert(!gamebattle::wire::parse_report_detail(Value::object({})).has_value());
+    assert(detail(Value::atom("summary")) == Detail::summary);
+    assert(detail(Value::binary("events")) == Detail::events);
+    bool rejected = false;
+    try {
+        static_cast<void>(detail(Value::atom("everything")));
+    } catch (const gamebattle::term::DecodeError& error) {
+        rejected = std::string(error.what()) == "report must be summary, actions, or events";
+    }
+    assert(rejected);
+}
+
 } // namespace
 
 int main() {
@@ -939,6 +1080,7 @@ int main() {
     test_chain_fizzles_when_caster_dies();
     test_chain_rules_are_validated();
     test_wire_parses_chain_names();
+    test_report_encoding();
     std::cout << "all gamebattle tests passed\n";
     return 0;
 }

@@ -8,6 +8,7 @@
 %% for result. They run when GAMEBATTLE_PORT points at a built Port; with
 %% GAMEBATTLE_TEST_CONFIG (a pack compiled from config/example) they also cover
 %% skill_ids/passive_ids. differential/2 runs any number of cases by hand.
+%% Requests with the `report` option compare the client report bytes too.
 
 -export([differential/2, random_request/1, invalid_request/1, config_request/1]).
 
@@ -48,7 +49,55 @@ invalid_requests_test() ->
     Invalid(<<"ETF map keys must be atoms or binaries">>, Example#{1 => 2}),
     Invalid(<<"positive integer does not fit into int64">>, Example#{battle_id => 1 bsl 63}),
     Invalid(<<"skill_ids/passive_ids require a loaded battle config pack">>,
-            with_first_unit(Example, fun(U) -> (maps:remove(skills, U))#{skill_ids => [501]} end)).
+            with_first_unit(Example, fun(U) -> (maps:remove(skills, U))#{skill_ids => [501]} end)),
+    Invalid(<<"report must be summary, actions, or events">>, Example#{report => all}),
+    Invalid(<<"report must be an atom or binary">>, Example#{report => 2}),
+    %% The report option is read before the rest of the request.
+    Invalid(<<"report must be summary, actions, or events">>,
+            (maps:remove(defender, Example))#{<<"report">> => <<"full">>}).
+
+%% The actions report adds up every event, step by step.
+report_test() ->
+    {ok, Full} = gamebattle_erl:simulate(gamebattle:example_request(), undefined),
+    Events = maps:get(events, Full),
+    Decode = fun(Detail) ->
+                 {ok, Result} = gamebattle_erl:simulate(
+                                  (gamebattle:example_request())#{report => Detail}, undefined),
+                 ?assertEqual(maps:remove(events, Full), maps:remove(report, Result)),
+                 battle_client_pb:decode_msg(maps:get(report, Result), 'BattleReport')
+             end,
+    Summary = Decode(summary),
+    ?assertEqual(length(maps:get(units, Full)), length(maps:get(units, Summary))),
+    ?assertEqual([], maps:get(events, Summary)),
+    ?assertEqual([], maps:get(actions, Summary)),
+    ?assertEqual(length(Events), length(maps:get(events, Decode(events)))),
+    #{actions := Actions, events := []} = Decode(actions),
+    ?assertEqual(length(Events), lists:sum([N || #{event_count := N} <- Actions])),
+    ?assertEqual(lists:sum([V || #{type := T, value := V} <- Events,
+                                 T =:= damage orelse T =:= direct_damage]),
+                 lists:sum([D || #{units := Units} <- Actions, #{damage := D} <- Units])),
+    ?assertEqual(length([E || #{type := action_start} = E <- Events]),
+                 length([A || #{actor := Actor} = A <- Actions, Actor =/= 0])),
+    %% The bytes are canonical: what gpb writes for the same message.
+    [?assertEqual(Bytes, battle_client_pb:encode_msg(
+                           battle_client_pb:decode_msg(Bytes, 'BattleReport'), 'BattleReport'))
+     || Detail <- [summary, actions, events],
+        Bytes <- [gamebattle_report:encode(Full, Detail)]],
+    ?assertEqual(battle_client_pb:encode_msg(gamebattle_client:battle_report(Full), 'BattleReport'),
+                 gamebattle_report:encode(Full, events)),
+    %% gamebattle_client sends the bytes as they are.
+    {ok, Result} = gamebattle_erl:simulate((gamebattle:example_request())#{report => actions},
+                                           undefined),
+    Message = gamebattle_client:encode_battle_report(7, Result),
+    ?assertMatch(#{request_id := 7, body := {battle_report, #{actions := [_ | _]}}},
+                 battle_client_pb:decode_msg(Message, 'ServerMessage')),
+    ?assertEqual(battle_client_pb:encode_msg(
+                   #{request_id => 7,
+                     body => {battle_report,
+                              battle_client_pb:decode_msg(maps:get(report, Result),
+                                                          'BattleReport')}},
+                   'ServerMessage'),
+                 Message).
 
 missing_config_pack_test() ->
     ?assertEqual({error, #{type => config_load_failed,
@@ -65,10 +114,18 @@ port_test_() ->
              fun() -> {ok, Apps} = application:ensure_all_started(gamebattle), Apps end,
              fun(Apps) -> [application:stop(App) || App <- lists:reverse(Apps)] end,
              [{timeout, 300, fun() -> ?assertEqual([], differential(1, 400)) end},
+              {timeout, 300, fun reports_match/0},
               {timeout, 300, fun invalid_requests_match/0},
               {timeout, 300, fun config_requests_match/0},
               fun gauntlet_matches/0]}
     end.
+
+%% Compact results: the summary and the client report bytes.
+reports_match() ->
+    Mismatches = [{Seed, Detail} || Seed <- lists:seq(1, 300),
+                                    Detail <- [summary, actions, events, <<"actions">>],
+                                    not same((random_request(Seed))#{report => Detail})],
+    ?assertEqual([], Mismatches).
 
 invalid_requests_match() ->
     Mismatches = [Seed || Seed <- lists:seq(1, 400),
@@ -241,7 +298,7 @@ to_binaries(Value) -> Value.
 invalid_request(Seed) ->
     Request = random_request(Seed),
     rand:seed(exsss, {Seed, 99, 7}),
-    mutate(Request, int(1, 14)).
+    mutate(Request, int(1, 15)).
 
 mutate(R, 1) -> R#{max_rounds => pick([0, 10001, -5, 1 bsl 33])};
 mutate(R, 2) -> R#{max_events => pick([99, 1000001, <<"many">>, 2.5])};
@@ -279,7 +336,9 @@ mutate(R, 13) ->
     E = #{type => add_buff, buff => Buff},
     with_first_unit(R, fun(U) -> U#{skills => [#{id => 3, effects => [E, E]}]} end);
 mutate(R, 14) ->
-    R#{attacker => #{units => pick([[], not_a_list, [not_a_map]])}}.
+    R#{attacker => #{units => pick([[], not_a_list, [not_a_map]])}};
+mutate(R, 15) ->
+    (mutate(R, int(1, 14)))#{report => pick([full, <<"Actions">>, 3, [], summary, <<"events">>])}.
 
 effect_with_buff() ->
     put(next_buff_id, 100),

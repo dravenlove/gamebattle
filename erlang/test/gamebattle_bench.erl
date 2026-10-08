@@ -11,37 +11,60 @@
 %% Every adapter runs the same requests; run/0 first checks that all three
 %% return identical results. Times include everything a caller pays: encoding
 %% the request, the simulation and decoding the result.
+%%
+%% With the report option (summary, actions or events) every request asks for
+%% a compact result, which carries the client's BattleReport bytes instead of
+%% event maps:
+%%
+%%   gamebattle_bench:run(#{report => actions, scenarios => [example, long, stage2]})
 
 -export([run/0, run/1, long_battle/1]).
 
 -define(ADAPTERS, [nif, port, erlang]).
+-define(SCENARIOS, [example, random_mix, long]).
 
 -spec run() -> map().
 run() ->
     run(#{}).
 
 %% Options: sequential_calls (per scenario, default 2000), concurrent_calls
-%% (default 4000) and processes (concurrent callers, default the number of
-%% schedulers).
+%% (default 4000), processes (concurrent callers, default the number of
+%% schedulers), report (none, the default, or summary, actions or events) and
+%% scenarios (default [example, random_mix, long]; stage2 and stage3 are the
+%% gateway's stress stages).
 -spec run(map()) -> map().
 run(Options) ->
     {ok, _} = application:ensure_all_started(gamebattle),
     Processes = maps:get(processes, Options, erlang:system_info(schedulers_online)),
-    Scenarios = [{example, [gamebattle:example_request()]},
-                 {random_mix, [gamebattle_erl_tests:random_request(S) || S <- lists:seq(1, 200)]},
-                 {long, [long_battle(S) || S <- lists:seq(1, 20)]}],
-    io:format("OTP ~s, ~b schedulers, ~b dirty CPU schedulers~n",
+    Report = maps:get(report, Options, none),
+    io:format("OTP ~s, ~b schedulers, ~b dirty CPU schedulers, report: ~s~n",
               [erlang:system_info(otp_release), erlang:system_info(schedulers_online),
-               erlang:system_info(dirty_cpu_schedulers_online)]),
-    maps:from_list([{Name, scenario(Name, Requests, Processes, Options)}
-                    || {Name, Requests} <- Scenarios]).
+               erlang:system_info(dirty_cpu_schedulers_online), Report]),
+    maps:from_list([{Name, scenario(Name, requests(Name), Report, Processes, Options)}
+                    || Name <- maps:get(scenarios, Options, ?SCENARIOS)]).
 
--spec scenario(atom(), [map()], pos_integer(), map()) -> map().
-scenario(Name, Requests, Processes, Options) ->
+requests(example) -> [gamebattle:example_request()];
+requests(random_mix) -> [gamebattle_erl_tests:random_request(S) || S <- lists:seq(1, 200)];
+requests(long) -> [long_battle(S) || S <- lists:seq(1, 20)];
+requests(stage2) -> [stage(2, S) || S <- lists:seq(1, 3)];
+requests(stage3) -> [stage(3, S) || S <- lists:seq(1, 3)].
+
+stage(Id, Seed) ->
+    Lineup = [#{unit_id => N, position => N} || N <- lists:seq(1, 7)],
+    {ok, Request} = gamebattle_demo:request(Id, Lineup, Seed),
+    Request.
+
+-spec scenario(atom(), [map()], atom(), pos_integer(), map()) -> map().
+scenario(Name, Full, Report, Processes, Options) ->
+    Events = lists:sum([length(maps:get(events, Result))
+                        || {ok, Result} <- [simulate(erlang, R) || R <- Full]])
+             div length(Full),
+    Requests = case Report of
+                   none -> Full;
+                   _ -> [R#{report => Report} || R <- Full]
+               end,
     Expected = [simulate(nif, R) || R <- Requests],
     [Expected = [simulate(Adapter, R) || R <- Requests] || Adapter <- [port, erlang]],
-    Events = lists:sum([length(maps:get(events, Result)) || {ok, Result} <- Expected])
-             div length(Requests),
     Calls = scale_calls(maps:get(sequential_calls, Options, 2000), Events),
     io:format("~n== ~s: ~b request(s), ~b events per battle on average~n",
               [Name, length(Requests), Events]),

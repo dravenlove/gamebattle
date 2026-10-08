@@ -95,7 +95,9 @@
     defender = [] :: [#unit_config{}],
     source_battle_id = 0 :: integer(),
     forced_first_side = undefined :: attacker | defender | undefined,
-    unit_states = [] :: [{integer(), integer()}]
+    unit_states = [] :: [{integer(), integer()}],
+    %% The request's `report` option (wire::parse_report_detail).
+    report = none :: none | gamebattle_report:detail()
 }).
 
 %% A loaded config pack (gamebattle_erl_config).

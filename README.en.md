@@ -47,6 +47,7 @@ The same `seed` and the same input produce exactly the same result and event log
 - `src/effect_system.cpp`: the skill, damage, passive and buff effect system.
 - `src/battle_runtime.hpp`: the internal interfaces between the runtime components above.
 - `src/term.cpp`: encoding/decoding of a subset of the Erlang External Term Format, with no third-party dependencies.
+- `src/report.cpp`: writes the client's protobuf battle report for compact results, including the per-action aggregation; `erlang/src/gamebattle_report.erl` is its Erlang port.
 - `src/port_main.cpp`: the `{packet, 4}` Port executable.
 - `src/nif.cpp`: the dirty CPU NIF adapter.
 - `erlang/src/gamebattle_port.erl`: a supervised Port worker that serializes requests.
@@ -349,6 +350,7 @@ Top-level fields:
 | `max_events` | Maximum number of events, default 10000, stopping passive loops from blowing up without bound |
 | `attacker`, `defender` | The two formation maps |
 | `initial_conditions` | Optional runtime initial values for this battle; units not mentioned start at full HP |
+| `report` | Optional: `summary`, `actions` or `events`. The result then carries the client's battle report as protobuf bytes instead of the event list; see [Compact results](#compact-results) |
 
 Formation structure:
 
@@ -561,9 +563,30 @@ Chains produce the following events, only when someone responds:
 | `negate` | The negating unit | Owner of the negated link | The negated skill or passive ID | Number of the negated link |
 | `fizzle` | Owner of the fizzled link | 0 | The fizzled skill or passive ID | Link number |
 
+### Compact results
+
+The event list is by far the largest part of a result: a battle with tens of thousands of events turns into megabytes of Erlang maps, and with the NIF or the Port most of the time goes into handing those maps from C++ to Erlang, not into the battle itself. Most callers don't need the maps: the server settles on `winner` and `units`, and the events go to the client as they are. A request with `report` therefore gets a compact result:
+
+```erlang
+#{battle_id := BattleId, ..., units := [...],   % the same fields as above, without events
+  report := <<...>>}                             % an encoded BattleReport (proto/battle_client.proto)
+```
+
+`report` picks how much of the battle the bytes describe:
+
+| `report` | The BattleReport contains | Example battle | 7v7, 48,000 events |
+|---|---|---:|---:|
+| `summary` | The result and every unit's final state | 139 B | 407 B |
+| `actions` | Plus one `BattleAction` per step, with the events added up | 1.8 KB | 240 KB |
+| `events` | Plus every `BattleEvent` | 4.4 KB | 1.5 MB |
+
+With `actions` a step is either one unit's action (from `action_start` to `action_end`: its skill, every hit and every passive or buff reaction it set off) or a run of triggers outside any action. For each step the report has, per affected unit, the damage, healing, hits, crits, misses, last HP and whether it died, plus a count of every passive, buff and chain event. That is enough to play the battle back step by step, and a long passive chain costs a few entries instead of thousands of events.
+
+The C++ engine writes these bytes itself, so the result handed to Erlang stays small; `gamebattle_client:encode_battle_report/2` sends them on unchanged. All three adapters write the same bytes, and the bytes are canonical protobuf, identical to what gpb or any protobuf library writes for the same message. Requests without `report` get exactly the result they always did. See [docs/engine-benchmark.en.md](docs/engine-benchmark.en.md) for what this changes in speed.
+
 ## Client protocol
 
-Game clients talk to the server in protobuf, defined in `proto/battle_client.proto`. `gamebattle_client:encode_battle_report/2` encodes the result above as the `ServerMessage` sent to clients, and `gamebattle_client:decode_client_message/1` decodes and validates the `ClientMessage` a client sends. The client submits only a stage and a lineup; every number comes from the server.
+Game clients talk to the server in protobuf, defined in `proto/battle_client.proto`. `gamebattle_client:encode_battle_report/2` turns the result above into the `ServerMessage` sent to clients (a compact result's `report` bytes are sent as they are), and `gamebattle_client:decode_client_message/1` decodes and validates the `ClientMessage` a client sends. The client submits only a stage and a lineup; every number comes from the server.
 
 See [docs/client-protocol.en.md](docs/client-protocol.en.md) for framing, an Erlang server example, Unity/C# integration, security notes and compatibility rules.
 

@@ -49,10 +49,16 @@ message ServerMessage {
 message StartBattleReq {
   uint32 stage_id = 1;
   repeated LineupSlot lineup = 2;
-  // Leave the event log out of the reply: the report keeps the winner, the
-  // end reason and every unit's final state. For battles nobody watches
-  // (sweeps, auto-battles) a full log can be megabytes.
-  bool summary_only = 3;
+  // How much of the battle the reply describes; see ReportDetail.
+  ReportDetail detail = 3;
+}
+
+// Every level includes the result and each unit's final state.
+enum ReportDetail {
+  REPORT_DETAIL_UNSPECIFIED = 0;  // the server's choice: ACTIONS
+  REPORT_DETAIL_SUMMARY = 1;      // nothing more: for battles nobody watches
+  REPORT_DETAIL_ACTIONS = 2;      // one aggregated BattleAction per step: what clients play back
+  REPORT_DETAIL_EVENTS = 3;       // every BattleEvent; can be megabytes, for debugging
 }
 
 message LineupSlot {
@@ -169,7 +175,50 @@ message BattleReport {
   uint64 attacker_initiative = 7;
   uint64 defender_initiative = 8;
   repeated UnitState units = 9;
-  repeated BattleEvent events = 10;
+  repeated BattleEvent events = 10;   // REPORT_DETAIL_EVENTS only
+  repeated BattleAction actions = 11; // REPORT_DETAIL_ACTIONS only
+}
+
+// One step of the battle with its events added up, so a long passive chain
+// costs a few entries instead of thousands of events. A step is either one
+// unit's action (from ACTION_START to ACTION_END: its skill, every hit and
+// every passive or buff reaction set off along the way), or a run of
+// triggers outside any action: battle start, round start or end, and the
+// before-action triggers of the next unit.
+message BattleAction {
+  int32 round = 1;
+  Phase phase = 2;
+  Side side = 3;                   // the acting unit's side; unset for triggers
+  uint64 actor = 4;                // the acting unit, or 0 for triggers
+  uint32 skill_id = 5;             // the skill used; 0 for a basic attack or triggers
+  repeated UnitChange units = 6;   // in the order the units were first affected
+  repeated EffectCount effects = 7;
+  uint32 event_count = 8;          // how many BattleEvents this step stands for
+}
+
+// What one unit went through during a step, from DAMAGE, DIRECT_DAMAGE, MISS,
+// HEAL and DEATH events.
+message UnitChange {
+  uint64 unit = 1;
+  int64 damage = 2;      // damage taken, direct damage included
+  int64 heal = 3;        // healing received
+  uint32 hits = 4;       // DAMAGE and DIRECT_DAMAGE events
+  uint32 crits = 5;
+  uint32 misses = 6;     // attacks on this unit that missed
+  int64 hp = 7;          // HP at the end of the step
+  bool died = 8;
+}
+
+// Every other event, counted by type, unit and source, in the order first
+// seen. For BUFF_ADD, BUFF_REMOVE and BUFF_EXPIRE the unit is the one whose
+// buffs changed; otherwise it is the event's actor (whose passive, buff
+// reaction or chain link it was).
+message EffectCount {
+  EventType type = 1;
+  uint64 unit = 2;
+  uint32 source_id = 3;
+  uint32 count = 4;
+  int64 value = 5;       // the last such event's value, e.g. a buff's stacks
 }
 
 // ---------------------------------------------------------------- gauntlet

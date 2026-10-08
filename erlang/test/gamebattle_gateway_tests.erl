@@ -8,7 +8,7 @@
 
 gateway_test_() ->
     {setup, fun setup/0, fun cleanup/1,
-     [fun battle/0, fun summary_only/0, fun unknown_unit/0, fun bad_frame/0, fun busy/0]}.
+     [fun battle/0, fun details/0, fun unknown_unit/0, fun bad_frame/0, fun busy/0]}.
 
 setup() ->
     Settings = [{gateway_port, 0}, {gateway_engine, erlang}, {battle_workers, 1},
@@ -26,10 +26,13 @@ connect() ->
                                    [binary, {packet, 4}, {active, false}]),
     Socket.
 
-start_battle(Socket, RequestId, Stage, Lineup, SummaryOnly) ->
+start_battle(Socket, RequestId, Stage, Lineup) ->
+    start_battle(Socket, RequestId, Stage, Lineup, 'REPORT_DETAIL_UNSPECIFIED').
+
+start_battle(Socket, RequestId, Stage, Lineup, Detail) ->
     Message = #{request_id => RequestId,
                 body => {start_battle,
-                         #{stage_id => Stage, summary_only => SummaryOnly,
+                         #{stage_id => Stage, detail => Detail,
                            lineup => [#{unit_id => U, position => P} || {U, P} <- Lineup]}}},
     ok = gen_tcp:send(Socket, battle_client_pb:encode_msg(Message, 'ClientMessage')).
 
@@ -39,27 +42,32 @@ reply(Socket) ->
 
 battle() ->
     Socket = connect(),
-    start_battle(Socket, 1, 1, [{1, 1}, {2, 2}, {3, 3}], false),
+    start_battle(Socket, 1, 1, [{1, 1}, {2, 2}, {3, 3}]),
     #{request_id := 1, body := {battle_report, Report}} = reply(Socket),
     ?assertNotEqual('WINNER_UNSPECIFIED', maps:get(winner, Report)),
-    ?assert(length(maps:get(events, Report)) > 10),
+    %% The default detail: actions.
+    ?assertEqual([], maps:get(events, Report)),
+    ?assert(length(maps:get(actions, Report)) > 10),
     ?assertEqual(8, length(maps:get(units, Report))),
     gen_tcp:close(Socket).
 
-summary_only() ->
+details() ->
     Socket = connect(),
-    start_battle(Socket, 2, 1, [{1, 1}], true),
-    #{request_id := 2, body := {battle_report, Report}} = reply(Socket),
-    ?assertEqual([], maps:get(events, Report, [])),
-    ?assertEqual(6, length(maps:get(units, Report))),
+    start_battle(Socket, 2, 1, [{1, 1}], 'REPORT_DETAIL_SUMMARY'),
+    #{request_id := 2, body := {battle_report, Summary}} = reply(Socket),
+    ?assertMatch(#{events := [], actions := []}, Summary),
+    ?assertEqual(6, length(maps:get(units, Summary))),
+    start_battle(Socket, 3, 1, [{1, 1}], 'REPORT_DETAIL_EVENTS'),
+    #{request_id := 3, body := {battle_report, Full}} = reply(Socket),
+    ?assertMatch(#{events := [_ | _], actions := []}, Full),
     gen_tcp:close(Socket).
 
 unknown_unit() ->
     Socket = connect(),
-    start_battle(Socket, 3, 1, [{99, 1}], false),
+    start_battle(Socket, 3, 1, [{99, 1}]),
     ?assertMatch(#{request_id := 3, body := {error, #{code := 'ERROR_CODE_INVALID_REQUEST'}}},
                  reply(Socket)),
-    start_battle(Socket, 4, 42, [{1, 1}], false),
+    start_battle(Socket, 4, 42, [{1, 1}]),
     ?assertMatch(#{request_id := 4, body := {error, #{code := 'ERROR_CODE_INVALID_REQUEST'}}},
                  reply(Socket)),
     gen_tcp:close(Socket).
@@ -73,8 +81,8 @@ bad_frame() ->
 busy() ->
     Socket = connect(),
     Lineup = [{N, N} || N <- lists:seq(1, 7)],
-    start_battle(Socket, 5, 3, Lineup, true),
-    start_battle(Socket, 6, 3, Lineup, true),
+    start_battle(Socket, 5, 3, Lineup, 'REPORT_DETAIL_SUMMARY'),
+    start_battle(Socket, 6, 3, Lineup, 'REPORT_DETAIL_SUMMARY'),
     Replies = [reply(Socket), reply(Socket)],
     ?assertMatch([#{request_id := 6, body := {error, #{code := 'ERROR_CODE_RETRY_LATER'}}},
                   #{request_id := 5, body := {battle_report, _}}],

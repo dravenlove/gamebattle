@@ -2,17 +2,17 @@
 
 **中文** | [English](client-protocol.en.md)
 
-游戏客户端与战斗服务之间使用 protobuf。协议定义在 [`proto/battle_client.proto`](../proto/battle_client.proto)，Erlang 侧由 [`erlang/src/gamebattle_client.erl`](../erlang/src/gamebattle_client.erl) 负责转换。Erlang 与 C++ 之间仍然使用原来的 ETF，这一层没有任何变化。
+游戏客户端与战斗服务之间使用 protobuf。协议定义在 [`proto/battle_client.proto`](../proto/battle_client.proto)，Erlang 侧由 [`erlang/src/gamebattle_client.erl`](../erlang/src/gamebattle_client.erl) 负责转换。Erlang 与 C++ 之间仍然使用 ETF。战报本身由引擎写出：请求带 `report` 选项时返回紧凑结果，其中的 `report` 字段就是编码好的 `BattleReport`（见 README 的[紧凑结果](../README.md#紧凑结果)）。
 
 ```text
 客户端（Unity/C#、Cocos/TS……）
    │  protobuf：ClientMessage / ServerMessage
    ▼
 Erlang 网关或玩法进程 ── gamebattle_client:decode_client_message/1
-   │  用服务器上的玩家数据组装战斗请求（客户端只提供阵容）
+   │  用服务器上的玩家数据组装战斗请求（客户端只提供阵容和战报详细程度）
    ▼
-gamebattle:simulate/2 ── ETF {packet,4} ──> C++ gamebattle_port
-   │  结果 map
+gamebattle:simulate/2 ── ETF ──> C++ 引擎（NIF 或 Port），同时写出 BattleReport 字节
+   │  很小的结果 map：胜负、units、report 字节
    ▼
 gamebattle_client:encode_battle_report/2 ──> 客户端
 ```
@@ -27,14 +27,37 @@ gamebattle_client:encode_battle_report/2 ──> 客户端
 
 | 方向 | 消息 | 用途 |
 |---|---|---|
-| 客户端 → 服务器 | `ClientMessage.start_battle` | 选择关卡并提交阵容：`stage_id` 与 `lineup`（`unit_id` + `position`）。`summary_only` 为真时回复不带事件日志，适合扫荡、自动战斗这类没人观看的战斗。 |
-| 服务器 → 客户端 | `ServerMessage.battle_report` | 一场战斗的完整战报：胜负、结束原因、各单位最终状态、按顺序排列的事件。 |
+| 客户端 → 服务器 | `ClientMessage.start_battle` | 选择关卡并提交阵容：`stage_id` 与 `lineup`（`unit_id` + `position`），以及 `detail`：回复要描述多少战斗内容（见下文）。 |
+| 服务器 → 客户端 | `ServerMessage.battle_report` | 一场战斗的战报：胜负、结束原因、各单位最终状态，以及按步骤（`actions`）或按事件（`events`）排列的战斗过程。 |
 | 服务器 → 客户端 | `ServerMessage.gauntlet_report` | 车轮战汇总，`waves` 中每一波都是一份 `BattleReport`。 |
 | 服务器 → 客户端 | `ServerMessage.error` | 错误码与给玩家看的文字。 |
 
 `request_id` 由客户端选择，服务器在回复中原样带回；服务器主动推送的消息填 0。
 
 战报字段与引擎结果同名，含义见 README 的[结果与战报](../README.md#结果与战报)。引擎的名字按固定规则转成枚举：`damage` → `EVENT_TYPE_DAMAGE`，`first_side` → `PHASE_FIRST_SIDE`，`max_rounds` → `END_REASON_MAX_ROUNDS`。
+
+## 战报的详细程度
+
+`StartBattleReq.detail` 有三档，每一档都包含胜负、结束原因和每个单位的最终状态：
+
+| `detail` | 战报另外包含 | 示例战斗 | 7v7、每人 40 个被动、48,000 个事件 | 适用 |
+|---|---|---:|---:|---|
+| `REPORT_DETAIL_SUMMARY` | 没有别的 | 139 B | 407 B | 扫荡、自动战斗等没人观看的战斗 |
+| `REPORT_DETAIL_ACTIONS`（也是默认值） | `actions`：每一步一个 `BattleAction` | 1.8 KB | 240 KB | 播放战斗过程 |
+| `REPORT_DETAIL_EVENTS` | `events`：每一个 `BattleEvent` | 4.4 KB | 1.5 MB | 调试和回放工具 |
+
+`BattleAction` 是把一步里的事件汇总后的结果：
+
+- 一步要么是一个单位的一次行动，从 `ACTION_START` 到 `ACTION_END`（有 `actor`、`side` 和 `skill_id`；`skill_id` 为 0 表示普攻），要么是行动之外连续发生的一串触发，例如开场、回合开始、回合结束或行动前的被动（`actor` 为 0）。
+- `units` 为这一步影响到的每个单位给出一个 `UnitChange`，按第一次受影响的先后排列：受到的 `damage` 和 `heal`、`hits`、`crits`、`misses`、最后一次受击或治疗后的 `hp`，以及 `died`。
+- 其余事件计入 `effects`，按事件类型、单位和 `source_id` 各一个 `EffectCount`：被动（`EVENT_TYPE_PASSIVE`，单位是触发者）、Buff 的添加/移除/结束（单位是身上有这个 Buff 的单位）、Buff 反应、连锁、无效和失效。`value` 是最后一个同类事件的值，例如 Buff 的层数。
+- `event_count` 表示这一步代表了多少个 `BattleEvent`。
+
+播放一步时：先展示行动者的技能，再依次展示每个 `UnitChange`（伤害数字、治疗数字、血条变到 `hp`、阵亡），最后展示效果（被动图标加次数）。对同一个单位的一千次被动伤害，在这里就是一个 `hits` = 1000 的 `UnitChange`，所以长被动连锁的战报也很小。
+
+服务器不认识客户端要的档位时（客户端比服务器新），按 `REPORT_DETAIL_ACTIONS` 处理。
+
+## 错误
 
 | 错误码 | 含义 | 客户端处理 |
 |---|---|---|
@@ -51,10 +74,12 @@ gamebattle_client:encode_battle_report/2 ──> 客户端
 handle_frame(Socket, Frame) ->
     Reply =
         case gamebattle_client:decode_client_message(Frame) of
-            {ok, RequestId, {start_battle, #{stage_id := StageId, lineup := Lineup}}} ->
+            {ok, RequestId, {start_battle, #{stage_id := StageId, lineup := Lineup,
+                                             detail := Detail}}} ->
                 %% 你的玩法代码：检查关卡是否解锁、单位是否属于该玩家，
                 %% 再从服务器数据取出属性、技能，组装 gamebattle 请求。
-                Request = build_request(StageId, Lineup),
+                %% 带上 report，引擎会直接写出 BattleReport（summary | actions | events）。
+                Request = (build_request(StageId, Lineup))#{report => Detail},
                 case gamebattle:simulate(port, Request) of
                     {ok, Result} ->
                         gamebattle_client:encode_battle_report(RequestId, Result);
@@ -74,14 +99,14 @@ handle_frame(Socket, Frame) ->
 
 | 函数 | 作用 |
 |---|---|
-| `decode_client_message/1` | 解码并校验 `ClientMessage`：阵容非空、不超过 256 个、`unit_id` 大于 0 且不重复、`position` 在 0..1000。任何错误都返回 `{error, RequestId, bad_message}`，不会抛异常。 |
-| `encode_battle_report/2` | `gamebattle:simulate/1,2` 的结果 → `ServerMessage` 二进制。 |
+| `decode_client_message/1` | 解码并校验 `ClientMessage`：阵容非空、不超过 256 个、`unit_id` 大于 0 且不重复、`position` 在 0..1000。`detail` 解码为 `summary`、`actions` 或 `events`，正好是请求选项 `report` 的取值。任何错误都返回 `{error, RequestId, bad_message}`，不会抛异常。 |
+| `encode_battle_report/2` | `gamebattle:simulate/1,2` 的结果 → `ServerMessage` 二进制。紧凑结果里的 `report` 字节原样发出；完整结果（请求没带 `report`）连同全部事件一起编码。 |
 | `encode_gauntlet_report/2` | `gamebattle:run_gauntlet/3,4` 的结果 → `ServerMessage` 二进制。`carryover` 只留在服务器。 |
 | `encode_error/3` | 错误码 + 给玩家看的文字 → `ServerMessage` 二进制。 |
 | `error_code/1` | 把 `gamebattle` 返回的 `{error, Map}` 映射为建议的错误码。 |
 | `battle_report/1`、`gauntlet_report/1` | 只转换为消息 map，不编码；需要自己组装 `ServerMessage` 时使用。 |
 
-编码前会校验每个字段（gpb 的 `{verify, always}`），值超出范围会直接抛错，而不是发出错误的字节。
+经 gpb 编码的字段都会先校验（gpb 的 `{verify, always}`），值超出范围会直接抛错，而不是发出错误的字节。引擎写出的战报字节不经过 gpb，由测试保证它们解码后再编码得到完全相同的字节。
 
 ## 客户端（Unity / C#）
 
@@ -137,18 +162,27 @@ var req = new ClientMessage { RequestId = 1, StartBattle = new StartBattleReq { 
 req.StartBattle.Lineup.Add(new LineupSlot { UnitId = 1001, Position = 1 });
 BattleWire.Write(stream, req);
 
-// 播放战报
+// 播放战报（detail 为 ACTIONS，也是默认值）
 ServerMessage reply = BattleWire.Read(stream);
 switch (reply.BodyCase)
 {
     case ServerMessage.BodyOneofCase.BattleReport:
-        foreach (BattleEvent e in reply.BattleReport.Events)
+        foreach (BattleAction step in reply.BattleReport.Actions)
         {
-            switch (e.Type)
+            if (step.Actor != 0) { /* step.Actor 使用技能 step.SkillId（0 为普攻） */ }
+            foreach (UnitChange u in step.Units)
             {
-                case EventType.Damage: /* e.Actor 打 e.Target，e.Value 点伤害 */ break;
-                case EventType.Chain:  /* 连锁第 e.Value 环 */ break;
-                default: break;  // 不认识的类型直接跳过
+                /* u.Unit 受到 u.Damage 伤害，共 u.Hits 击（u.Crits 次暴击），治疗 u.Heal，
+                   血条变到 u.Hp；u.Died 表示阵亡 */
+            }
+            foreach (EffectCount fx in step.Effects)
+            {
+                switch (fx.Type)
+                {
+                    case EventType.Passive: /* fx.Unit 的被动 fx.SourceId 触发了 fx.Count 次 */ break;
+                    case EventType.BuffAdd: /* fx.Unit 获得 Buff fx.SourceId，层数 fx.Value */ break;
+                    default: break;  // 不认识的类型直接跳过
+                }
             }
         }
         break;
@@ -181,11 +215,11 @@ C# 生成代码会去掉枚举值的类型前缀：`EVENT_TYPE_DAMAGE` 在 C# �
 
 1. 照常修改 C++ 引擎与 ETF 协议。
 2. 在 `proto/battle_client.proto` 的 `EventType` 末尾追加 `EVENT_TYPE_XXX = <下一个编号>;`。
-3. 在 `gamebattle_client:event_type/1` 中追加一行映射。
+3. 在三处加上引擎名字到枚举值的映射：`gamebattle_client:event_type/1`、`gamebattle_report:event_type/1`，以及 `src/report.cpp` 的 `kEventTypes`（按枚举顺序）。如果新事件会改变单位 HP，还要决定 `BattleAction` 怎样汇总它，`src/report.cpp` 和 `gamebattle_report.erl` 保持一致。
 4. 在 `erlang/test/gamebattle_client_tests.erl` 的 `ENGINE_EVENT_TYPES` 里加上新名字，运行 `rebar3 eunit`。
 5. 重新生成客户端代码，再发布客户端。
 
-漏掉第 3 步时，新事件会以 `EVENT_TYPE_UNSPECIFIED` 发给客户端，第 4 步的测试会发现它。阶段（`Phase`）和结束原因（`EndReason`）同理。
+漏掉第 3 步时，新事件会以 `EVENT_TYPE_UNSPECIFIED` 发给客户端：`gamebattle_client` 的映射由第 4 步的测试发现，另外两处不一致由 `gamebattle_erl_tests` 的对照测试发现。阶段（`Phase`）和结束原因（`EndReason`）同理。
 
 ### 新增请求类型时
 
@@ -209,7 +243,8 @@ C# 生成代码会去掉枚举值的类型前缀：`EVENT_TYPE_DAMAGE` 在 C# �
 
 | 编码 | 原始大小 | gzip 后 |
 |---|---:|---:|
-| protobuf（本协议） | 4,428 B | 1,716 B |
+| protobuf，`REPORT_DETAIL_ACTIONS` | 1,768 B | 737 B |
+| protobuf，`REPORT_DETAIL_EVENTS` | 4,428 B | 1,716 B |
 | ETF（`term_to_binary`） | 40,913 B | 2,452 B |
 | JSON（省略零值字段） | 31,738 B | 2,526 B |
 

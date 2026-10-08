@@ -435,19 +435,24 @@ emit(Phase, Type, Side, Actor, Target, SourceId, Value, HpBefore, HpAfter, Criti
 
 -spec finish(#st{}, #request{}, non_neg_integer(), non_neg_integer()) -> map().
 finish(#st{} = St, #request{} = Request, AttackerInitiative, DefenderInitiative) ->
-    #{battle_id => Request#request.battle_id,
-      seed => Request#request.seed,
-      source_battle_id => Request#request.source_battle_id,
-      winner => St#st.winner,
-      reason => St#st.reason,
-      rounds => St#st.rounds,
-      attacker_initiative => AttackerInitiative,
-      defender_initiative => DefenderInitiative,
-      events => lists:reverse(St#st.events),
-      units => [#{id => Id, side => Side, initial_hp => InitialHp, hp => Hp,
-                  max_hp => MaxHp, alive => Hp > 0}
-                || #unit{id = Id, side = Side, initial_hp = InitialHp, hp = Hp,
-                         max_hp = MaxHp} <- tuple_to_list(St#st.units)]}.
+    Summary = #{battle_id => Request#request.battle_id,
+                seed => Request#request.seed,
+                source_battle_id => Request#request.source_battle_id,
+                winner => St#st.winner,
+                reason => St#st.reason,
+                rounds => St#st.rounds,
+                attacker_initiative => AttackerInitiative,
+                defender_initiative => DefenderInitiative,
+                units => [#{id => Id, side => Side, initial_hp => InitialHp, hp => Hp,
+                            max_hp => MaxHp, alive => Hp > 0}
+                          || #unit{id = Id, side = Side, initial_hp = InitialHp, hp = Hp,
+                                   max_hp = MaxHp} <- tuple_to_list(St#st.units)]},
+    Full = Summary#{events => lists:reverse(St#st.events)},
+    %% wire::encode_compact_result: the client report replaces the event maps.
+    case Request#request.report of
+        none -> Full;
+        Detail -> Summary#{report => gamebattle_report:encode(Full, Detail)}
+    end.
 
 %%% Arithmetic and Random (src/battle_state.cpp) --------------------------------
 

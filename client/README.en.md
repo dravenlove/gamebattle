@@ -36,7 +36,7 @@ Gateway settings (the application env wins over the OS environment):
 | Environment variable | Default | Meaning |
 |---|---|---|
 | `GAMEBATTLE_GATEWAY_PORT` | off | TCP port the gateway listens on |
-| `GAMEBATTLE_ENGINE` | `erlang` | Engine to use: `erlang`, `nif` or `port` (`port` runs one battle at a time) |
+| `GAMEBATTLE_ENGINE` | `erlang` | Engine to use: `erlang`, `nif` or `port` (`port` runs one battle at a time). For stages 2 and 3 use `nif`: it is 7–10 times faster |
 | `GAMEBATTLE_BATTLE_WORKERS` | number of schedulers (usually the cores) | Battles at a time |
 | `GAMEBATTLE_BATTLE_QUEUE` | 8 × battles at a time | Battles that may wait; more are rejected as busy |
 
@@ -46,11 +46,11 @@ The server logs its throughput every 10 seconds, for example `battles: 16.5/s do
 
 Stages and lineups are demo data, defined in [`erlang/src/gamebattle_demo.erl`](../erlang/src/gamebattle_demo.erl). Add your own units and passive setups there in the same way, then test them with the client.
 
-| Stage | Contents | One battle (measured on 4 cores) |
+| Stage | Contents | One battle (measured on 4 cores): plain Erlang / C++ |
 |---:|---|---|
-| 1 | A normal battle: your lineup against five heroes; one area skill and three passives each | about 1,400 events, 6 ms |
-| 2 | Mixed-passive stress: 7v7, 40 passives per hero over 7 triggers, each at most 3 times a round, all 30 rounds, nobody dies | about 48,000 events, about 180 ms |
-| 3 | Chain stress: 7v7, 20 damage passives per hero set off by being hit or hitting, each at most 3 times a round, all 30 rounds, nobody dies | about 110,000 events, about 450 ms |
+| 1 | A normal battle: your lineup against five heroes; one area skill and three passives each | about 1,400 events, 6 ms / 2 ms |
+| 2 | Mixed-passive stress: 7v7, 40 passives per hero over 7 triggers, each at most 3 times a round, all 30 rounds, nobody dies | about 48,000 events, about 190 ms / 35 ms |
+| 3 | Chain stress: 7v7, 20 damage passives per hero set off by being hit or hitting, each at most 3 times a round, all 30 rounds, nobody dies | about 110,000 events, about 450 ms / 40–60 ms |
 
 "Nobody dies" stands in for the worst case where revives keep everyone in the fight. Lineups pick heroes 1–7 as `hero:position`, for example `--lineup 1:1,2:2,3:3`.
 
@@ -60,21 +60,29 @@ Stages and lineups are demo data, defined in [`erlang/src/gamebattle_demo.erl`](
 python battle_client.py play --stage 1
 ```
 
-It prints the result, the round trip time, the report size, every unit's HP, the first events and a count of events by type.
+It prints the result, the round trip time, the report size, every unit's HP and the first steps of the battle, each with its skill, what every affected unit went through and the passives and buffs it set off:
+
+```text
+     3  第1回合   先手方    2004（防守方）技能 504
+          → 1001 受到 110（1 击），HP 3,013
+          → 1002 受到 80（1 击），HP 3,720
+          ...
+          效果：触发被动 701@2004 ×2  [12 个事件]
+```
 
 | Option | Meaning |
 |---|---|
 | `--stage N` | Stage, default 1 |
 | `--lineup 1:1,2:2` | Lineup; by default heroes 1–5 for stage 1 and 1–7 for stages 2 and 3 |
-| `--events N` | Print the first N events, `0` for all, default 40 |
-| `--summary-only` | No event log, just the result |
-| `--json FILE` | Write the full report as JSON |
+| `--detail LEVEL` | How much of the battle the report carries: `summary` (the result only), `actions` (the battle step by step, the default) or `events` (every event, megabytes for stages 2 and 3) |
+| `--show N` | Print the first N steps or events, `0` for all, default 40 (`--events` also works) |
+| `--json FILE` | Write the whole report as JSON |
 | `--host`, `--port` | Server address, default `127.0.0.1:7000`; put them before the subcommand |
 
 ## Load test: `load`
 
 ```bash
-python battle_client.py load --stage 2 --rate 100 --duration 30 --summary-only
+python battle_client.py load --stage 2 --rate 100 --duration 30
 ```
 
 The client starts battles at a fixed rate without waiting for earlier ones, like many players starting battles at once: a slower server doesn't mean fewer requests. It prints a line of progress every second, then a summary and a verdict.
@@ -84,7 +92,7 @@ The client starts battles at a fixed rate without waiting for earlier ones, like
 | `--rate N` | Battles started per second, default 100 |
 | `--duration N` | Seconds to run, default 30 |
 | `--connections N` | TCP connections to use, default 8 |
-| `--summary-only` | No event log. Use it to measure battle throughput alone; leave it out to include report bandwidth |
+| `--detail LEVEL` | As for `play`, default `actions`. `summary` measures the battles alone, without the report |
 | `--drain N` | Seconds to keep waiting for replies after sending stops, default 60 |
 
 How to read the results:
@@ -94,34 +102,38 @@ How to read the results:
 - Adjust `--rate` until busy rejections just reach 0: that rate is this machine's capacity for that stage.
 - A few busy rejections far below capacity are usually bursts: requests bunched up after a short pause and overflowed the queue. Size the queue as "acceptable waiting time × battles per second" (`GAMEBATTLE_BATTLE_QUEUE`).
 
-## Measured: 4 cores, plain-Erlang engine
+## Measured: 4 cores
 
-| Stage | Report | Target rate | Finished | p99 of finished battles | Busy rejections |
-|---:|---|---:|---:|---:|---:|
-| 1 | full | 100/s | 99.6/s | 12 ms | 0 |
-| 2 | summary only | 100/s | 17.1/s | 2.4 s | 81% |
-| 2 | summary only | 15/s | 14.9/s | 331 ms | 0 |
-| 3 | summary only | 100/s | 6.4/s | 6.0 s | 92% |
-| 3 | summary only | 5/s | 4.9/s | 665 ms | 0 |
-| 2 | full | 10/s | 7.2/s | 4.9 s | 5% |
+Reports with `--detail actions`, the client on the same machine (it takes some of the CPU too):
 
-- A full stage-2 report is about 1.4 MB. Building such a report and encoding it as protobuf cuts throughput from about 17 to about 7 battles a second.
-- Above capacity, queued battles wait for the ones ahead, so the p99 of those that finish reaches seconds. Requests beyond the queue are rejected at once instead of waiting forever.
+| Stage | Engine | Target rate | Finished | p99 of finished battles | Busy rejections | Report traffic |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | `nif` | 100/s | 99.8/s | 6 ms | 0 | 1.0 MB/s |
+| 1 | `erlang` | 100/s | 99.8/s | 9 ms | 0 | 1.0 MB/s |
+| 2 | `nif` | 80/s | 79.6/s | 87 ms | 0 | 18 MB/s |
+| 2 | `nif` | 100/s | 97.2/s | 418 ms | 1% | 22 MB/s |
+| 2 | `erlang` | 13/s | 12.8/s | 406 ms | 0 | 3 MB/s |
+| 3 | `nif` | 55/s | 54.2/s | 374 ms | 0 | 6.5 MB/s |
+| 3 | `erlang` | 5/s | 4.9/s | 707 ms | 0 | 0.6 MB/s |
+
+- Stage 2: the NIF handles about 97 battles a second on 4 cores, the Erlang engine about 13: 7.5 times as many. Stage 3: at least 55 against 5, about 10 times.
+- A report per step is about 240 KB for stage 2 and 125 KB for stage 3, against 1.5 MB and 3.8 MB with every event: 6 and 30 times less traffic. Stage 3 shrinks more because its long chains of hits on the same units add up to a few entries.
+- Above capacity, queued battles wait for the ones ahead, so the p99 of those that finish grows. Requests beyond the queue are rejected at once instead of waiting forever.
 
 ## How many cores 100 battles a second need
 
-Estimated from the per-battle CPU cost measured above, keeping CPU use at 70% for headroom:
+From the throughput above, keeping CPU use at 70% for headroom. Reports per step (`actions`):
 
-| Stage | Plain Erlang (summary only) | Plain Erlang (full report) | C++ with a compact result (estimate) | Report traffic per second (full report) |
+| Stage | C++ (`nif` or `port`) | Plain Erlang | Report traffic, per step | Report traffic, every event |
 |---:|---:|---:|---:|---:|
-| 1 | about 1 core (0.4 measured) | about 1 core (0.7 measured) | under 1 core | about 3 MB/s |
-| 2 | about 34 cores | about 80 cores | about 3.5 cores | about 140 MB/s |
-| 3 | about 90 cores | — | about 6.5 cores | about 300 MB/s (estimate) |
+| 1 | under 1 core | under 1 core | about 1 MB/s | about 2.3 MB/s |
+| 2 | about 6 cores | about 44 cores | about 24 MB/s | about 150 MB/s |
+| 3 | about 10 cores | about 80 cores | about 13 MB/s | about 390 MB/s |
 
-- The C++ column comes from measuring C++ on several threads: 168 battles a second at stage-2 size and 91 at stage-3 size, results already packed compactly. It needs the C++ result format changed first; see [docs/engine-benchmark.en.md](../docs/engine-benchmark.en.md).
-- Normal battles like stage 1 are no problem: at 100 a second the server used 0.7 cores on average (full reports), or 0.4 (summary only).
-- With passive chains as large as stages 2 and 3, 100 battles a second need tens to a hundred cores in plain Erlang, or C++.
-- Whichever engine you choose, full reports cannot go to clients as they are: at 100 battles a second they come to more than 1 Gbps.
+- Normal battles like stage 1 are no problem with either engine.
+- With passive chains as large as stages 2 and 3, use C++: it needs 7–8 times fewer cores. This needs reports from the engine (the `report` option, which the gateway always uses); see [docs/engine-benchmark.en.md](../docs/engine-benchmark.en.md).
+- Send clients reports per step. With every event, stage 2 and 3 battles at 100 a second come to 1.2–3 Gbps.
+- On a node that also runs game logic, keep a core free for it: start the node with `+SDcpu 3:3` on 4 cores (one dirty scheduler fewer), or use Port workers. A NIF on every core delays other processes by 30–50 ms; with a core kept free, by about 2 ms, at the cost of about a quarter of the throughput.
 
 ## Notes
 

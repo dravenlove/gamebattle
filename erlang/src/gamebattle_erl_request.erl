@@ -3,6 +3,7 @@
 %% Request decoding and validation for the pure-Erlang engine. It accepts and
 %% rejects exactly what the C++ side does, with the same messages:
 %%   check_term/1  the ETF reader (src/term.cpp): what any request may contain
+%%   report_detail/1  parse_report_detail (src/wire.cpp): the `report` option
 %%   parse/2       parse_request (src/wire.cpp): fields, defaults, types
 %%   validate/1    validate_request (src/battle_state.cpp): value bounds
 %% Errors are thrown as {gamebattle_erl_invalid, Message}.
@@ -22,7 +23,24 @@ fail(Message) ->
 -spec parse(term(), #config{} | undefined) -> #request{}.
 parse(Value, Config) ->
     check_term(Value, 0),
-    parse_request(Value, Config).
+    Detail = report_detail(Value),
+    Request = parse_request(Value, Config),
+    Request#request{report = Detail}.
+
+-spec report_detail(term()) -> none | gamebattle_report:detail().
+report_detail(Value) when is_map(Value) ->
+    case find(Value, report) of
+        {ok, Detail} ->
+            case as_string(Detail, <<"report">>) of
+                <<"summary">> -> summary;
+                <<"actions">> -> actions;
+                <<"events">> -> events;
+                _ -> fail(<<"report must be summary, actions, or events">>)
+            end;
+        error -> none
+    end;
+report_detail(_) ->
+    none.
 
 %%% ETF-level checks ----------------------------------------------------------
 

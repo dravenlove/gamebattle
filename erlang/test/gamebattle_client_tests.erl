@@ -71,6 +71,19 @@ every_engine_name_is_mapped_test() ->
     ?assertEqual(length(?ENGINE_END_REASONS), length(lists:usort(Reasons))),
     ?assertNot(lists:member('END_REASON_UNSPECIFIED', Reasons)).
 
+%% gamebattle_report (the engine's report bytes) has its own enum tables; they
+%% must agree with the ones above.
+report_enums_match_test() ->
+    [begin
+         Result = (result([event(1, Type, Phase)
+                           || Type <- ?ENGINE_EVENT_TYPES, Phase <- ?ENGINE_PHASES]))#{
+                    reason => Reason},
+         ?assertEqual(battle_client_pb:encode_msg(gamebattle_client:battle_report(Result),
+                                                  'BattleReport'),
+                      gamebattle_report:encode(Result, events))
+     end
+     || Reason <- ?ENGINE_END_REASONS].
+
 unknown_engine_names_become_unspecified_test() ->
     Report = gamebattle_client:battle_report(
                (result([event(1, some_future_event, some_future_phase)]))#{
@@ -127,16 +140,25 @@ decode_start_battle_test() ->
                           #{stage_id => 12,
                             lineup => [#{unit_id => 1001, position => 1},
                                        #{unit_id => 1002, position => 2}],
-                            summary_only => false}}},
+                            detail => actions}}},
                  gamebattle_client:decode_client_message(
                    client_bytes(5, [{1001, 1}, {1002, 2}]))),
-    Summary = battle_client_pb:encode_msg(
-                #{request_id => 6,
-                  body => {start_battle, #{stage_id => 1, summary_only => true,
-                                           lineup => [#{unit_id => 1, position => 1}]}}},
-                'ClientMessage'),
-    ?assertMatch({ok, 6, {start_battle, #{summary_only := true}}},
-                 gamebattle_client:decode_client_message(Summary)).
+    WithDetail = fun(Detail) ->
+                     Bytes = battle_client_pb:encode_msg(
+                               #{request_id => 6,
+                                 body => {start_battle,
+                                          #{stage_id => 1, detail => Detail,
+                                            lineup => [#{unit_id => 1, position => 1}]}}},
+                               'ClientMessage'),
+                     {ok, 6, {start_battle, #{detail := Decoded}}} =
+                         gamebattle_client:decode_client_message(Bytes),
+                     Decoded
+                 end,
+    ?assertEqual(summary, WithDetail('REPORT_DETAIL_SUMMARY')),
+    ?assertEqual(actions, WithDetail('REPORT_DETAIL_ACTIONS')),
+    ?assertEqual(events, WithDetail('REPORT_DETAIL_EVENTS')),
+    %% A level added after this server was built: the default.
+    ?assertEqual(actions, WithDetail(9)).
 
 decode_rejects_bad_requests_test() ->
     Decode = fun gamebattle_client:decode_client_message/1,

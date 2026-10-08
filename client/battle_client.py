@@ -5,7 +5,7 @@ It talks to the test gateway (erlang/src/gamebattle_gateway.erl) over TCP:
 every frame is a 4-byte big-endian length plus one protobuf message.
 
     python battle_client.py play --stage 1
-    python battle_client.py load --stage 2 --rate 100 --duration 30 --summary-only
+    python battle_client.py load --stage 2 --rate 100 --duration 30
 
 `play` runs one battle and prints the report; `load` sends battles at a fixed
 rate and reports throughput, latency and errors. Run with -h for the options.
@@ -27,6 +27,7 @@ PROTO_FILE = os.path.join(PROTO_DIR, "battle_client.proto")
 GENERATED_DIR = os.path.join(HERE, "generated")
 
 DEFAULT_LINEUPS = {1: "1:1,2:2,3:3,4:4,5:5"}
+DETAILS = {"summary": "只要结果", "actions": "按行动聚合的战报", "events": "逐事件的完整战报"}
 FULL_LINEUP = "1:1,2:2,3:3,4:4,5:5,6:6,7:7"
 
 EVENT_NAMES = {
@@ -88,10 +89,10 @@ def parse_lineup(text):
     return lineup
 
 
-def start_battle(pb, request_id, stage, lineup, summary_only):
+def start_battle(pb, request_id, stage, lineup, detail):
     message = pb.ClientMessage(request_id=request_id)
     message.start_battle.stage_id = stage
-    message.start_battle.summary_only = summary_only
+    message.start_battle.detail = pb.ReportDetail.Value("REPORT_DETAIL_" + detail.upper())
     for unit, position in lineup:
         message.start_battle.lineup.add(unit_id=unit, position=position)
     body = message.SerializeToString()
@@ -151,7 +152,7 @@ async def play(args, pb):
     lineup = parse_lineup(args.lineup or DEFAULT_LINEUPS.get(args.stage, FULL_LINEUP))
     reader, writer = await asyncio.open_connection(args.host, args.port)
     started = time.perf_counter()
-    writer.write(start_battle(pb, 1, args.stage, lineup, args.summary_only))
+    writer.write(start_battle(pb, 1, args.stage, lineup, args.detail))
     await writer.drain()
     data = await read_frame(reader)
     elapsed = (time.perf_counter() - started) * 1000
@@ -167,7 +168,13 @@ async def play(args, pb):
     print(f"结果：{enum_label(pb, 'Winner', report.winner, WINNER_NAMES)}，"
           f"{enum_label(pb, 'EndReason', report.reason, REASON_NAMES)}，{report.rounds} 回合，"
           f"先手值 {report.attacker_initiative} : {report.defender_initiative}")
-    print(f"往返 {elapsed:.1f} ms，战报 {len(data):,} 字节，{len(report.events):,} 个事件\n")
+    if report.actions:
+        size = f"{len(report.actions):,} 步，代表 {sum(a.event_count for a in report.actions):,} 个事件"
+    elif report.events:
+        size = f"{len(report.events):,} 个事件"
+    else:
+        size = "只有结果"
+    print(f"往返 {elapsed:.1f} ms，战报 {len(data):,} 字节，{size}\n")
 
     print(f"{pad('单位', 8)}{pad('阵营', 8)}{pad('初始HP', 14)}{pad('最终HP', 14)}{pad('最大HP', 14)}存活")
     for unit in report.units:
@@ -175,9 +182,18 @@ async def play(args, pb):
         print(f"{pad(str(unit.id), 8)}{pad(side, 8)}{pad(f'{unit.initial_hp:,}', 14)}"
               f"{pad(f'{unit.hp:,}', 14)}{pad(f'{unit.max_hp:,}', 14)}{'是' if unit.alive else '否'}")
 
+    if report.actions:
+        shown = report.actions if args.show == 0 else report.actions[:args.show]
+        print(f"\n战斗过程（显示 {len(shown):,} / {len(report.actions):,} 步，--show 0 显示全部）")
+        for index, action in enumerate(shown, 1):
+            print(format_action(pb, index, action))
+        actions = sum(1 for a in report.actions if a.actor)
+        print(f"\n共 {len(report.actions):,} 步：单位行动 {actions:,}，"
+              f"行动之外的触发 {len(report.actions) - actions:,}")
+
     if report.events:
-        shown = report.events if args.events == 0 else report.events[:args.events]
-        print(f"\n事件（显示 {len(shown):,} / {len(report.events):,} 条，--events 0 显示全部）")
+        shown = report.events if args.show == 0 else report.events[:args.show]
+        print(f"\n事件（显示 {len(shown):,} / {len(report.events):,} 条，--show 0 显示全部）")
         for event in shown:
             print(format_event(pb, event))
         counts = {}
@@ -191,6 +207,37 @@ async def play(args, pb):
         with open(args.json, "w", encoding="utf-8") as out:
             json.dump(MessageToDict(report, preserving_proto_field_name=True), out, ensure_ascii=False, indent=1)
         print(f"\n完整战报已写入 {args.json}")
+
+
+def format_action(pb, index, action):
+    phase = enum_label(pb, "Phase", action.phase, PHASE_NAMES)
+    text = f"{index:>6}  {pad(f'第{action.round}回合', 10)}{pad(phase, 10)}"
+    if action.actor:
+        side = enum_label(pb, "Side", action.side, SIDE_NAMES)
+        skill = f"技能 {action.skill_id}" if action.skill_id else "普攻"
+        text += f"{action.actor}（{side}）{skill}"
+    else:
+        text += "触发"
+    for unit in action.units:
+        parts = []
+        if unit.hits:
+            parts.append(f"受到 {unit.damage:,}（{unit.hits} 击" + (f"，{unit.crits} 暴击" if unit.crits else "") + "）")
+        if unit.misses:
+            parts.append(f"闪避 {unit.misses}")
+        if unit.heal:
+            parts.append(f"治疗 {unit.heal:,}")
+        if not unit.died or parts:  # a heal of 0 (already at full HP) leaves only the HP
+            parts.append(f"HP {unit.hp:,}")
+        if unit.died:
+            parts.append("阵亡")
+        text += f"\n          → {unit.unit} " + "，".join(parts)
+    if action.effects:
+        effects = [enum_label(pb, "EventType", e.type, EVENT_NAMES)
+                   + (f" {e.source_id}" if e.source_id else "") + (f"@{e.unit}" if e.unit else "")
+                   + (f" ×{e.count}" if e.count > 1 else "") for e in action.effects]
+        more = f" 等 {len(effects)} 项" if len(effects) > 6 else ""
+        text += "\n          效果：" + "，".join(effects[:6]) + more
+    return text + f"  [{action.event_count:,} 个事件]"
 
 
 def format_event(pb, event):
@@ -253,7 +300,7 @@ async def load(args, pb):
     request_ids = itertools.count(1)
 
     print(f"目标 {args.rate} 场/秒，持续 {args.duration} 秒，{args.connections} 个连接，关卡 {args.stage}，"
-          f"{'只要摘要' if args.summary_only else '完整战报'}")
+          f"{DETAILS[args.detail]}")
     print(f"{'秒':>4} {'发出':>6} {'完成':>6} {'繁忙':>6} {'错误':>5} {'在途':>6} "
           f"{'本秒p50':>9} {'本秒p99':>9} {'接收MB/s':>9}")
     interval = 1.0 / args.rate
@@ -269,7 +316,7 @@ async def load(args, pb):
         request_id = next(request_ids) & 0xFFFFFFFF
         _, writer = connections[n % len(connections)]
         pending[request_id] = time.perf_counter()
-        writer.write(start_battle(pb, request_id, args.stage, lineup, args.summary_only))
+        writer.write(start_battle(pb, request_id, args.stage, lineup, args.detail))
         stats.sent += 1
         if writer.transport.get_write_buffer_size() > 1 << 20:
             await writer.drain()
@@ -321,8 +368,9 @@ def main():
     play_parser = commands.add_parser("play", help="打一场战斗并打印战报")
     play_parser.add_argument("--stage", type=int, default=1, help="关卡：1 普通，2 混合被动压力，3 连锁压力")
     play_parser.add_argument("--lineup", help="阵容 英雄:位置,...，英雄 1-7，例如 1:1,2:2,3:3")
-    play_parser.add_argument("--summary-only", action="store_true", help="不要事件日志，只要结果")
-    play_parser.add_argument("--events", type=int, default=40, help="打印前几条事件，0 表示全部")
+    play_parser.add_argument("--detail", choices=DETAILS, default="actions",
+                             help="战报详细程度：summary 只要结果，actions 按行动聚合（默认），events 逐事件")
+    play_parser.add_argument("--show", "--events", type=int, default=40, help="打印前几步或前几条事件，0 表示全部")
     play_parser.add_argument("--json", help="把完整战报写成 JSON 文件")
 
     load_parser = commands.add_parser("load", help="按固定速率发起战斗，测吞吐和耗时")
@@ -331,7 +379,8 @@ def main():
     load_parser.add_argument("--rate", type=float, default=100, help="每秒发起多少场")
     load_parser.add_argument("--duration", type=float, default=30, help="持续多少秒")
     load_parser.add_argument("--connections", type=int, default=8, help="用多少个 TCP 连接")
-    load_parser.add_argument("--summary-only", action="store_true", help="不要事件日志，排除带宽的影响")
+    load_parser.add_argument("--detail", choices=DETAILS, default="actions",
+                             help="战报详细程度，默认 actions；summary 排除战报的开销")
     load_parser.add_argument("--drain", type=float, default=60, help="发完后最多再等多少秒收回复")
 
     args = parser.parse_args()

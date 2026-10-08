@@ -25,6 +25,7 @@ add_library(gamebattle_core STATIC
     src/config_store.cpp
     src/effect_system.cpp
     src/engine.cpp
+    src/report.cpp
     src/target_selector.cpp
     src/term.cpp
     src/wire.cpp

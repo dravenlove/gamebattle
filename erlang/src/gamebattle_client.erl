@@ -6,6 +6,10 @@
 %% Engine results stay Erlang maps inside the server. This module turns them
 %% into the protobuf messages clients receive, and decodes and validates what
 %% clients send. It never forwards engine error text to clients.
+%%
+%% A result from a request with the `report` option (summary, actions or
+%% events) already carries its BattleReport as protobuf bytes, written by the
+%% engine (src/report.cpp, or gamebattle_report for the Erlang engine).
 
 -export([
     encode_battle_report/2,
@@ -27,12 +31,18 @@
 -type lineup_slot() :: #{unit_id := pos_integer(), position := 0..?MAX_POSITION}.
 -type client_request() ::
     {start_battle, #{stage_id := non_neg_integer(), lineup := [lineup_slot(), ...],
-                     summary_only := boolean()}}.
+                     detail := gamebattle_report:detail()}}.
 
 %%% Server -> client ---------------------------------------------------------
 
 %% RequestId is the ClientMessage.request_id being answered, or 0 for a push.
+%% A result with `report` bytes is sent as is; one with `events` is sent in
+%% full (REPORT_DETAIL_EVENTS).
 -spec encode_battle_report(non_neg_integer(), map()) -> binary().
+encode_battle_report(RequestId, #{report := Report}) when is_binary(Report) ->
+    %% The same bytes gpb writes for ServerMessage{request_id, battle_report}.
+    Head = battle_client_pb:encode_msg(#{request_id => RequestId}, 'ServerMessage'),
+    <<Head/binary, (11 bsl 3 bor 2), (varint(byte_size(Report)))/binary, Report/binary>>;
 encode_battle_report(RequestId, Result) ->
     encode_server(RequestId, {battle_report, battle_report(Result)}).
 
@@ -126,14 +136,25 @@ start_battle(#{stage_id := StageId, lineup := Slots} = Request) ->
         andalso length(lists:usort(UnitIds)) =:= length(UnitIds),
     case Valid of
         true ->
+            Detail = maps:get(detail, Request, 'REPORT_DETAIL_UNSPECIFIED'),
             {ok, {start_battle, #{stage_id => StageId, lineup => Lineup,
-                                  summary_only => maps:get(summary_only, Request, false)}}};
+                                  detail => report_detail(Detail)}}};
         false -> error
     end.
+
+%% REPORT_DETAIL_UNSPECIFIED and values this server doesn't know get ACTIONS.
+-spec report_detail(atom() | integer()) -> gamebattle_report:detail().
+report_detail('REPORT_DETAIL_SUMMARY') -> summary;
+report_detail('REPORT_DETAIL_EVENTS') -> events;
+report_detail(_) -> actions.
 
 -spec valid_slot(map()) -> boolean().
 valid_slot(#{unit_id := UnitId, position := Position}) ->
     UnitId > 0 andalso Position >= 0 andalso Position =< ?MAX_POSITION.
+
+-spec varint(non_neg_integer()) -> binary().
+varint(Value) when Value < 16#80 -> <<Value>>;
+varint(Value) -> <<(Value band 16#7F bor 16#80), (varint(Value bsr 7))/binary>>.
 
 -spec unit_state(map()) -> battle_client_pb:'UnitState'().
 unit_state(#{id := Id, side := Side, initial_hp := InitialHp, hp := Hp,
