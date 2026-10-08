@@ -40,6 +40,7 @@
 - `tools/config_compiler.cpp`：C++20 CSV 校验与 `.gbcfg` 二进制配置编译器。
 - `config/example`：技能、效果、Buff、被动的策划表示例。
 - `docs/buff-v2-design.md`：通用 Modifier、Reaction、生命周期和叠层策略设计。
+- `proto/battle_client.proto`：游戏客户端协议（protobuf），说明见 `docs/client-protocol.md`。
 - `src/engine.cpp`：只负责编排先后手、回合与行动顺序。
 - `src/battle_state.cpp`：本场可变状态、初始条件、属性缓存和结果快照。
 - `src/target_selector.cpp`：独立的目标选择策略。
@@ -51,6 +52,7 @@
 - `erlang/src/gamebattle_port.erl`：受监督、串行化请求的 Port worker。
 - `erlang/src/gamebattle_nif.erl`：NIF 模块。
 - `erlang/src/gamebattle.erl`：统一 API 与完整示例输入。
+- `erlang/src/gamebattle_client.erl`：引擎结果与客户端 protobuf 消息之间的转换和请求校验。
 
 ## Windows 构建
 
@@ -457,6 +459,12 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
 | `chain` | 响应者 | 它回应的单位 | 响应被动 ID | 环节编号（2 起） |
 | `negate` | 无效者 | 被无效环节的发动者 | 被无效的技能或被动 ID | 被无效环节的编号 |
 | `fizzle` | 失效环节的发动者 | 0 | 失效的技能或被动 ID | 环节编号 |
+
+## 客户端协议
+
+游戏客户端与服务器之间使用 protobuf，定义在 `proto/battle_client.proto`。`gamebattle_client:encode_battle_report/2` 把上面的结果编码成发给客户端的 `ServerMessage`，`gamebattle_client:decode_client_message/1` 解码并校验客户端发来的 `ClientMessage`。客户端只提交关卡和阵容，数值全部来自服务器。
+
+帧格式、Erlang 服务端示例、Unity/C# 接入、安全注意事项和兼容规则见 [docs/client-protocol.md](docs/client-protocol.md)。
 
 ## v1 的明确边界
 

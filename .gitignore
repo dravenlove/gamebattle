@@ -8,6 +8,8 @@
 /config/generated/
 /erlang/_build/
 /erlang/ebin/
+# Generated from proto/battle_client.proto by rebar3_gpb_plugin.
+/erlang/src/battle_client_pb.erl
 /erlang/bin/gamebattle_config_compiler
 /erlang/bin/gamebattle_config_compiler.exe
 /erlang/priv/gamebattle_port

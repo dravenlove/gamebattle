@@ -40,6 +40,7 @@ The same `seed` and the same input produce exactly the same result and event log
 - `tools/config_compiler.cpp`: a C++20 CSV validator and `.gbcfg` binary config compiler.
 - `config/example`: sample designer tables for skills, effects, buffs and passives.
 - `docs/buff-v2-design.md`: the design of generic modifiers, reactions, lifetimes and stacking policies.
+- `proto/battle_client.proto`: the game-client protocol (protobuf); see `docs/client-protocol.en.md`.
 - `src/engine.cpp`: only orchestrates first/second side, rounds and acting order.
 - `src/battle_state.cpp`: per-battle mutable state, initial conditions, attribute cache and result snapshot.
 - `src/target_selector.cpp`: a standalone target selection strategy.
@@ -51,6 +52,7 @@ The same `seed` and the same input produce exactly the same result and event log
 - `erlang/src/gamebattle_port.erl`: a supervised Port worker that serializes requests.
 - `erlang/src/gamebattle_nif.erl`: the NIF module.
 - `erlang/src/gamebattle.erl`: the unified API and a complete sample input.
+- `erlang/src/gamebattle_client.erl`: converts engine results to client protobuf messages and validates client requests.
 
 ## Building on Windows
 
@@ -457,6 +459,12 @@ Chains produce the following events, only when someone responds:
 | `chain` | The responder | The unit it answered | The response passive's ID | Link number (from 2) |
 | `negate` | The negating unit | Owner of the negated link | The negated skill or passive ID | Number of the negated link |
 | `fizzle` | Owner of the fizzled link | 0 | The fizzled skill or passive ID | Link number |
+
+## Client protocol
+
+Game clients talk to the server in protobuf, defined in `proto/battle_client.proto`. `gamebattle_client:encode_battle_report/2` encodes the result above as the `ServerMessage` sent to clients, and `gamebattle_client:decode_client_message/1` decodes and validates the `ClientMessage` a client sends. The client submits only a stage and a lineup; every number comes from the server.
+
+See [docs/client-protocol.en.md](docs/client-protocol.en.md) for framing, an Erlang server example, Unity/C# integration, security notes and compatibility rules.
 
 ## The explicit boundaries of v1
 

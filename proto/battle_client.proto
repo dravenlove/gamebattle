@@ -1,0 +1,188 @@
+// Client protocol v1 for the gamebattle battle service.
+//
+// Framing
+//   TCP:       every frame is a 4-byte big-endian length followed by one
+//              encoded message (Erlang gen_tcp's {packet, 4} does this).
+//   WebSocket: one message per binary frame, no length prefix.
+//   Client -> server frames carry a ClientMessage; server -> client frames
+//   carry a ServerMessage.
+//
+// Compatibility
+//   Only add fields and enum values. Never change a field's number or type,
+//   and never reuse a number: mark removed fields `reserved`. Clients must
+//   tolerate enum values they don't know (they arrive as plain integers).
+//
+// Every enum starts with *_UNSPECIFIED = 0 so "not set" can be told apart, and
+// enum values carry their type as a prefix because C++ and C# put the values
+// of proto3 enums in a shared scope.
+
+syntax = "proto3";
+
+package gamebattle.client.v1;
+
+option csharp_namespace = "GameBattle.Client.V1";
+
+// ---------------------------------------------------------------- envelopes
+
+message ClientMessage {
+  // Chosen by the client and echoed in the reply; 0 means no reply expected.
+  uint32 request_id = 1;
+  oneof body {
+    StartBattleReq start_battle = 10;
+  }
+}
+
+message ServerMessage {
+  // The request this replies to, or 0 for unsolicited pushes.
+  uint32 request_id = 1;
+  oneof body {
+    ErrorResp error = 10;
+    BattleReport battle_report = 11;
+    GauntletReport gauntlet_report = 12;
+  }
+}
+
+// ---------------------------------------------------------------- requests
+
+// The client sends only what the player chose. HP, attack and every other
+// stat come from server-side player data: never trust numbers from a client.
+message StartBattleReq {
+  uint32 stage_id = 1;
+  repeated LineupSlot lineup = 2;
+}
+
+message LineupSlot {
+  uint64 unit_id = 1;
+  int32 position = 2;
+}
+
+// ---------------------------------------------------------------- errors
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_BAD_MESSAGE = 1;      // the frame could not be decoded or failed validation
+  ERROR_CODE_INVALID_REQUEST = 2;  // well formed, but not allowed
+  ERROR_CODE_RETRY_LATER = 3;      // a temporary server problem; the same request may succeed later
+  ERROR_CODE_INTERNAL = 4;
+}
+
+message ErrorResp {
+  ErrorCode code = 1;
+  // Text meant for players. Engine diagnostics stay in server logs.
+  string message = 2;
+}
+
+// ---------------------------------------------------------------- battle report
+
+enum Side {
+  SIDE_UNSPECIFIED = 0;
+  SIDE_ATTACKER = 1;
+  SIDE_DEFENDER = 2;
+}
+
+enum Winner {
+  WINNER_UNSPECIFIED = 0;
+  WINNER_ATTACKER = 1;
+  WINNER_DEFENDER = 2;
+  WINNER_DRAW = 3;
+}
+
+enum EndReason {
+  END_REASON_UNSPECIFIED = 0;
+  END_REASON_INITIAL_STATE = 1;
+  END_REASON_BATTLE_START = 2;
+  END_REASON_ROUND_START = 3;
+  END_REASON_ALL_UNITS_DEFEATED = 4;
+  END_REASON_ROUND_END = 5;
+  END_REASON_MAX_ROUNDS = 6;
+  END_REASON_EVENT_LIMIT = 7;
+}
+
+enum Phase {
+  PHASE_UNSPECIFIED = 0;
+  PHASE_BATTLE = 1;
+  PHASE_ROUND_START = 2;
+  PHASE_FIRST_SIDE = 3;
+  PHASE_SECOND_SIDE = 4;
+  PHASE_ROUND_END = 5;
+}
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_INITIATIVE = 1;
+  EVENT_TYPE_ACTION_START = 2;
+  EVENT_TYPE_ACTION_END = 3;
+  EVENT_TYPE_SKILL = 4;
+  EVENT_TYPE_PASSIVE = 5;
+  EVENT_TYPE_DAMAGE = 6;
+  EVENT_TYPE_DIRECT_DAMAGE = 7;
+  EVENT_TYPE_MISS = 8;
+  EVENT_TYPE_HEAL = 9;
+  EVENT_TYPE_DEATH = 10;
+  EVENT_TYPE_BUFF_ADD = 11;
+  EVENT_TYPE_BUFF_REMOVE = 12;
+  EVENT_TYPE_BUFF_REACTION = 13;
+  EVENT_TYPE_BUFF_EXPIRE = 14;
+  EVENT_TYPE_CHAIN = 15;
+  EVENT_TYPE_NEGATE = 16;
+  EVENT_TYPE_FIZZLE = 17;
+}
+
+// One entry of the battle's event log, in order. The client can replay the
+// whole battle from these alone. Field numbers stay within 1..15 so every tag
+// is a single byte: a battle can have thousands of events.
+message BattleEvent {
+  uint32 seq = 1;
+  int32 round = 2;
+  Phase phase = 3;
+  EventType type = 4;
+  Side side = 5;
+  uint64 actor = 6;
+  uint64 target = 7;
+  uint32 source_id = 8;     // skill, passive or buff id; meaning depends on type
+  int64 value = 9;          // damage, heal, stacks, chain link number, ...
+  int64 hp_before = 10;
+  int64 hp_after = 11;
+  bool critical = 12;
+}
+
+message UnitState {
+  uint64 id = 1;
+  Side side = 2;
+  int64 initial_hp = 3;
+  int64 hp = 4;
+  int64 max_hp = 5;
+  bool alive = 6;
+}
+
+message BattleReport {
+  uint64 battle_id = 1;
+  uint64 seed = 2;
+  uint64 source_battle_id = 3;   // the battle this one continued from, or 0
+  Winner winner = 4;
+  EndReason reason = 5;
+  int32 rounds = 6;
+  uint64 attacker_initiative = 7;
+  uint64 defender_initiative = 8;
+  repeated UnitState units = 9;
+  repeated BattleEvent events = 10;
+}
+
+// ---------------------------------------------------------------- gauntlet
+
+enum GauntletStatus {
+  GAUNTLET_STATUS_UNSPECIFIED = 0;
+  GAUNTLET_STATUS_COMPLETED = 1;
+  GAUNTLET_STATUS_DEFEATED = 2;
+  GAUNTLET_STATUS_DRAW = 3;
+}
+
+message GauntletReport {
+  GauntletStatus status = 1;
+  Winner winner = 2;
+  uint32 completed_waves = 3;
+  uint32 fought_waves = 4;
+  uint32 total_waves = 5;
+  uint32 stopped_at_wave = 6;    // 0 when every wave was won
+  repeated BattleReport waves = 7;
+}
