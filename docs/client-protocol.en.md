@@ -27,7 +27,7 @@ gamebattle_client:encode_battle_report/2 ──> client
 
 | Direction | Message | Purpose |
 |---|---|---|
-| client → server | `ClientMessage.start_battle` | Choose a stage and submit a lineup: `stage_id` and `lineup` (`unit_id` + `position`). |
+| client → server | `ClientMessage.start_battle` | Choose a stage and submit a lineup: `stage_id` and `lineup` (`unit_id` + `position`). With `summary_only` set, the reply leaves out the event log, for battles nobody watches such as sweeps and auto-battles. |
 | server → client | `ServerMessage.battle_report` | A whole battle: winner, end reason, every unit's final state and the ordered events. |
 | server → client | `ServerMessage.gauntlet_report` | A gauntlet summary; each entry of `waves` is a `BattleReport`. |
 | server → client | `ServerMessage.error` | An error code and text for the player. |
@@ -163,6 +163,8 @@ switch (reply.BodyCase)
 The C# generator strips the type prefix from enum values: `EVENT_TYPE_DAMAGE` is `EventType.Damage` in C#. Over WebSocket, parse each binary frame with `ServerMessage.Parser.ParseFrom(frameBytes)`; there is no length prefix.
 
 Other languages use their own generators: `ts-proto` or `protobufjs` for TypeScript, `protoc-gen-go` for Go, `--cpp_out` for C++.
+
+A complete working example: the test gateway [`erlang/src/gamebattle_gateway.erl`](../erlang/src/gamebattle_gateway.erl) on the server side and [`client/battle_client.py`](../client/battle_client.py) as the client; see [client/README.en.md](../client/README.en.md).
 
 ## Security
 

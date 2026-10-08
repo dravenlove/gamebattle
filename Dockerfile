@@ -75,8 +75,9 @@ ENV RELX_OUT_FILE_PATH=/tmp \
 USER gamebattle
 WORKDIR /opt/gamebattle
 
-# epmd and the distribution port (DIST_PORT in vm.args.src).
-EXPOSE 4369 9100
+# epmd and the distribution port (DIST_PORT in vm.args.src), and the test
+# gateway's usual port (only open when GAMEBATTLE_GATEWAY_PORT is set).
+EXPOSE 4369 9100 7000
 
 ENTRYPOINT ["gamebattle-entrypoint"]
 CMD ["foreground"]

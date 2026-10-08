@@ -124,6 +124,27 @@ If both engines are kept (say, Erlang during development and C++ in production),
 2. For more throughput or many long battles: keep C++, but first change its result to "summary term + protobuf event bytes", then use a pool of Port workers or the NIF.
 3. Either way, rerun the benchmark below on production hardware, with real battle data in place of the sample scenarios.
 
+## Many battles at once
+
+Large 7v7 battles with dozens of passives per unit and per-round limits, 1 to 16 at a time on 4 cores. "Delay to other processes" is the extra delay seen by a probe process that wakes every 1 ms: how much game logic would be held up.
+
+| Scenario | Adapter | One battle | Saturated throughput on 4 cores | Delay to other processes, p99 |
+|---|---|---:|---:|---:|
+| 40 mixed passives each, 3 a round (about 48,000 events) | plain Erlang | 178 ms | 21/s | ≤ 5 ms |
+| | current NIF | 283 ms | 8.6/s | about 210 ms |
+| | current Port (4 workers) | 313 ms | 12/s | 50–120 ms |
+| | C++ with a compact result (no transport) | 22 ms | 168/s | — |
+| 20 chaining passives each, 3 a round (about 110,000 events) | plain Erlang | 413 ms | 9/s | ≤ 5 ms |
+| | current NIF | 640 ms | 3.6/s | 2–215 ms |
+| | current Port (4 workers) | 665 ms | 4.8/s | 36–88 ms |
+| | C++ with a compact result (no transport) | 40 ms | 91/s | — |
+
+- Beyond the number of cores throughput stops growing, and in plain Erlang all battles slow down together: with 16 at once each takes about 4 times as long as alone. Queueing in a fixed-size battle pool gives a lower average time than unlimited concurrency.
+- With the current ETF result format, the NIF and the Port hold up other processes on the node by hundreds of milliseconds under load; plain Erlang's preemptive scheduling does not.
+- A large running battle takes 10–18 MB in the plain-Erlang engine, mostly the event log.
+
+See [client/README.en.md](../client/README.en.md) for how many cores 100 battles a second need and for measured load tests.
+
 ## Reproducing
 
 Build the Port and the NIF in Release mode, then run the benchmark:

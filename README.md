@@ -53,6 +53,8 @@
 - `erlang/src/gamebattle_nif.erl`：NIF 模块。
 - `erlang/src/gamebattle.erl`：统一 API 与完整示例输入。
 - `erlang/src/gamebattle_erl*.erl`：纯 Erlang 版战斗引擎，逐行对应 C++ 引擎，结果完全一致；与 NIF、Port 的性能对比见 `docs/engine-benchmark.md`。
+- `erlang/src/gamebattle_gateway.erl`、`gamebattle_pool.erl`、`gamebattle_demo.erl`：测试网关（TCP + protobuf）、固定并发的战斗池和演示关卡。
+- `client/`：测试客户端，可以打一场看战报，也可以按固定速率压测，见 `client/README.md`。
 - `erlang/src/gamebattle_client.erl`：引擎结果与客户端 protobuf 消息之间的转换和请求校验。
 - `Dockerfile`、`compose.yaml`、`docker/`、`erlang/config/vm.args.src`：Docker 构建镜像与部署镜像，见“Docker 构建与部署”。
 
@@ -174,6 +176,7 @@ docker run -d --name battle --init --restart unless-stopped --network host \
 | `NODE_NAME_TYPE` | `name` | `name`（长节点名，`@` 后面必须带点，例如 IP）或 `sname`（短节点名）。必须与游戏服节点一致，两种节点互相连不上。 |
 | `GAMEBATTLE_CONFIG` | 不加载 | 配置包路径。Port 每次启动都会加载它，包括崩溃重启之后。 |
 | `DIST_PORT` | `9100` | 分布式 Erlang 端口，与 epmd 的 `4369` 一起开放给游戏服节点。 |
+| `GAMEBATTLE_GATEWAY_PORT` | 不开启 | 测试网关端口，配合 `client/` 的测试客户端做验证和压测，正式服不要开启。相关设置见 [client/README.md](client/README.md)。 |
 
 运维命令：
 
@@ -563,6 +566,8 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
 游戏客户端与服务器之间使用 protobuf，定义在 `proto/battle_client.proto`。`gamebattle_client:encode_battle_report/2` 把上面的结果编码成发给客户端的 `ServerMessage`，`gamebattle_client:decode_client_message/1` 解码并校验客户端发来的 `ClientMessage`。客户端只提交关卡和阵容，数值全部来自服务器。
 
 帧格式、Erlang 服务端示例、Unity/C# 接入、安全注意事项和兼容规则见 [docs/client-protocol.md](docs/client-protocol.md)。
+
+想直接验证：开启测试网关后，用 [client/](client/README.md) 里的测试客户端打一场看战报，或者按每秒 N 场压测，看这套战斗在你们的负载下能不能扛住。
 
 ## v1 的明确边界
 

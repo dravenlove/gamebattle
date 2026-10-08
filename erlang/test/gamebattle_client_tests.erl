@@ -126,9 +126,17 @@ decode_start_battle_test() ->
     ?assertEqual({ok, 5, {start_battle,
                           #{stage_id => 12,
                             lineup => [#{unit_id => 1001, position => 1},
-                                       #{unit_id => 1002, position => 2}]}}},
+                                       #{unit_id => 1002, position => 2}],
+                            summary_only => false}}},
                  gamebattle_client:decode_client_message(
-                   client_bytes(5, [{1001, 1}, {1002, 2}]))).
+                   client_bytes(5, [{1001, 1}, {1002, 2}]))),
+    Summary = battle_client_pb:encode_msg(
+                #{request_id => 6,
+                  body => {start_battle, #{stage_id => 1, summary_only => true,
+                                           lineup => [#{unit_id => 1, position => 1}]}}},
+                'ClientMessage'),
+    ?assertMatch({ok, 6, {start_battle, #{summary_only := true}}},
+                 gamebattle_client:decode_client_message(Summary)).
 
 decode_rejects_bad_requests_test() ->
     Decode = fun gamebattle_client:decode_client_message/1,

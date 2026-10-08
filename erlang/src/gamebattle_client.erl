@@ -26,7 +26,8 @@
 -type error_code() :: bad_message | invalid_request | retry_later | internal.
 -type lineup_slot() :: #{unit_id := pos_integer(), position := 0..?MAX_POSITION}.
 -type client_request() ::
-    {start_battle, #{stage_id := non_neg_integer(), lineup := [lineup_slot(), ...]}}.
+    {start_battle, #{stage_id := non_neg_integer(), lineup := [lineup_slot(), ...],
+                     summary_only := boolean()}}.
 
 %%% Server -> client ---------------------------------------------------------
 
@@ -115,7 +116,7 @@ encode_server(RequestId, Body) ->
                                 'ServerMessage').
 
 -spec start_battle(battle_client_pb:'StartBattleReq'()) -> {ok, client_request()} | error.
-start_battle(#{stage_id := StageId, lineup := Slots}) ->
+start_battle(#{stage_id := StageId, lineup := Slots} = Request) ->
     Lineup = [#{unit_id => UnitId, position => Position}
               || #{unit_id := UnitId, position := Position} <- Slots],
     UnitIds = [UnitId || #{unit_id := UnitId} <- Lineup],
@@ -124,7 +125,9 @@ start_battle(#{stage_id := StageId, lineup := Slots}) ->
         andalso lists:all(fun valid_slot/1, Lineup)
         andalso length(lists:usort(UnitIds)) =:= length(UnitIds),
     case Valid of
-        true -> {ok, {start_battle, #{stage_id => StageId, lineup => Lineup}}};
+        true ->
+            {ok, {start_battle, #{stage_id => StageId, lineup => Lineup,
+                                  summary_only => maps:get(summary_only, Request, false)}}};
         false -> error
     end.
 

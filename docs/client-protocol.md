@@ -27,7 +27,7 @@ gamebattle_client:encode_battle_report/2 ──> 客户端
 
 | 方向 | 消息 | 用途 |
 |---|---|---|
-| 客户端 → 服务器 | `ClientMessage.start_battle` | 选择关卡并提交阵容：`stage_id` 与 `lineup`（`unit_id` + `position`）。 |
+| 客户端 → 服务器 | `ClientMessage.start_battle` | 选择关卡并提交阵容：`stage_id` 与 `lineup`（`unit_id` + `position`）。`summary_only` 为真时回复不带事件日志，适合扫荡、自动战斗这类没人观看的战斗。 |
 | 服务器 → 客户端 | `ServerMessage.battle_report` | 一场战斗的完整战报：胜负、结束原因、各单位最终状态、按顺序排列的事件。 |
 | 服务器 → 客户端 | `ServerMessage.gauntlet_report` | 车轮战汇总，`waves` 中每一波都是一份 `BattleReport`。 |
 | 服务器 → 客户端 | `ServerMessage.error` | 错误码与给玩家看的文字。 |
@@ -161,6 +161,8 @@ switch (reply.BodyCase)
 C# 生成代码会去掉枚举值的类型前缀：`EVENT_TYPE_DAMAGE` 在 C# 里是 `EventType.Damage`。走 WebSocket 时，直接用 `ServerMessage.Parser.ParseFrom(frameBytes)` 解析每个二进制帧，不需要长度前缀。
 
 其他语言用各自的生成器即可：TypeScript 可用 `ts-proto` 或 `protobufjs`，Go 用 `protoc-gen-go`，C++ 用 `--cpp_out`。
+
+完整的可运行示例：服务端是测试网关 [`erlang/src/gamebattle_gateway.erl`](../erlang/src/gamebattle_gateway.erl)，客户端是 [`client/battle_client.py`](../client/battle_client.py)，用法见 [client/README.md](../client/README.md)。
 
 ## 安全
 

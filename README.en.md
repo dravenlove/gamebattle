@@ -53,6 +53,8 @@ The same `seed` and the same input produce exactly the same result and event log
 - `erlang/src/gamebattle_nif.erl`: the NIF module.
 - `erlang/src/gamebattle.erl`: the unified API and a complete sample input.
 - `erlang/src/gamebattle_erl*.erl`: the battle engine in plain Erlang, a line-by-line port of the C++ engine with identical results; see `docs/engine-benchmark.en.md` for how it compares with the NIF and the Port.
+- `erlang/src/gamebattle_gateway.erl`, `gamebattle_pool.erl`, `gamebattle_demo.erl`: the test gateway (TCP + protobuf), a fixed-concurrency battle pool and demo stages.
+- `client/`: a test client that runs one battle and shows the report, or load-tests at a fixed rate; see `client/README.en.md`.
 - `erlang/src/gamebattle_client.erl`: converts engine results to client protobuf messages and validates client requests.
 - `Dockerfile`, `compose.yaml`, `docker/`, `erlang/config/vm.args.src`: the Docker build and deploy images; see "Docker build and deployment".
 
@@ -174,6 +176,7 @@ docker run -d --name battle --init --restart unless-stopped --network host \
 | `NODE_NAME_TYPE` | `name` | `name` (long names: the part after `@` must contain a dot, such as an IP) or `sname` (short names). It must match the game nodes; nodes of the two kinds cannot connect. |
 | `GAMEBATTLE_CONFIG` | nothing loaded | The config package path. The Port loads it every time it starts, including after a crash. |
 | `DIST_PORT` | `9100` | The distributed-Erlang port, to be opened to game nodes together with epmd's `4369`. |
+| `GAMEBATTLE_GATEWAY_PORT` | off | The test gateway's port, for verification and load tests with the client in `client/`; never enable it in production. See [client/README.en.md](client/README.en.md) for its settings. |
 
 Operations:
 
@@ -563,6 +566,8 @@ Chains produce the following events, only when someone responds:
 Game clients talk to the server in protobuf, defined in `proto/battle_client.proto`. `gamebattle_client:encode_battle_report/2` encodes the result above as the `ServerMessage` sent to clients, and `gamebattle_client:decode_client_message/1` decodes and validates the `ClientMessage` a client sends. The client submits only a stage and a lineup; every number comes from the server.
 
 See [docs/client-protocol.en.md](docs/client-protocol.en.md) for framing, an Erlang server example, Unity/C# integration, security notes and compatibility rules.
+
+To try it directly: enable the test gateway and use the test client in [client/](client/README.en.md) to run a battle and read its report, or to load-test at N battles a second and see whether the battle system holds up under your load.
 
 ## The explicit boundaries of v1
 

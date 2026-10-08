@@ -49,6 +49,10 @@ message ServerMessage {
 message StartBattleReq {
   uint32 stage_id = 1;
   repeated LineupSlot lineup = 2;
+  // Leave the event log out of the reply: the report keeps the winner, the
+  // end reason and every unit's final state. For battles nobody watches
+  // (sweeps, auto-battles) a full log can be megabytes.
+  bool summary_only = 3;
 }
 
 message LineupSlot {
