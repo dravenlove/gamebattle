@@ -53,6 +53,7 @@
 - `erlang/src/gamebattle_nif.erl`：NIF 模块。
 - `erlang/src/gamebattle.erl`：统一 API 与完整示例输入。
 - `erlang/src/gamebattle_client.erl`：引擎结果与客户端 protobuf 消息之间的转换和请求校验。
+- `Dockerfile`、`compose.yaml`、`docker/`、`erlang/config/vm.args.src`：Docker 构建镜像与部署镜像，见“Docker 构建与部署”。
 
 ## Windows 构建
 
@@ -101,6 +102,89 @@ cmake --install out/build/linux-runtime-release-nif \
 ```
 
 生产机或构建镜像需要 C++20 编译器、CMake 3.21+ 和 Make；构建 NIF 时，构建机的 Erlang/OTP 主版本应与生产运行时保持一致。若目标系统的 glibc 版本不同，尽量在较旧或与生产完全一致的发行版上编译。
+
+## Docker 构建与部署
+
+不想在本机安装工具链，或者需要在与生产一致的 Linux 上产出文件时，使用仓库根目录的 `Dockerfile`。它有三个目标：
+
+| 目标 | 内容 |
+|---|---|
+| `build` | 构建环境：编译 Port、NIF、配置编译器和 Erlang 代码，运行 C++ 测试与 `rebar3 eunit`（含经过真实 Port 的端到端测试），再组装发布包。任何一步失败，构建就失败。 |
+| `artifacts` | 只含产物，配合 `--output` 导出到本机。 |
+| `runtime`（默认） | 部署镜像：一个独立的战斗节点。它是自带 ERTS 的 Erlang release，游戏服节点通过分布式 Erlang 调用它。 |
+
+### 构建版本
+
+```bash
+# 构建、运行全部测试，并把 Linux 产物导出到 dist/
+docker build --target artifacts --output type=local,dest=dist .
+```
+
+`dist/` 中包含：
+
+- `priv/gamebattle_port`、`priv/gamebattle_nif.so`：放进你自己 Erlang 应用的 `priv/` 目录；
+- `bin/gamebattle_config_compiler`：配置编译器；
+- `gamebattle-0.1.0.tar.gz`：完整的战斗节点发布包，解压后运行 `bin/gamebattle foreground`（环境变量见下文）。
+
+产物在 `erlang:26` 镜像的 Debian bookworm 上编译，部署目标的 glibc 不能比它旧，NIF 只能配合 OTP 26 使用。更换 OTP 版本时，`RUNTIME_IMAGE` 必须与新镜像使用同一个 Debian 版本（用 `docker run --rm erlang:27 cat /etc/os-release` 查看）：
+
+```bash
+docker build --build-arg ERLANG_IMAGE=erlang:27 --build-arg RUNTIME_IMAGE=debian:bookworm-slim \
+  --target artifacts --output type=local,dest=dist .
+```
+
+`build` 目标也可以当工具镜像，用来编译策划配置：
+
+```bash
+docker build --target build -t gamebattle-build .
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/config:/config" gamebattle-build \
+  gamebattle_config_compiler --input-dir /config/example --output /config/generated/battle.gbcfg
+```
+
+### 部署版本
+
+先按上面的方法生成 `config/generated/battle.gbcfg`，再启动战斗节点：
+
+```bash
+export ERLANG_COOKIE="$(openssl rand -hex 32)"   # 与游戏服节点共用同一个 cookie
+docker compose up -d --build
+```
+
+`compose.yaml` 启动名为 `gamebattle@battle` 的节点，把 `config/generated` 只读挂载进容器，Port 每次启动时加载其中的 `battle.gbcfg`。同一 Docker 网络中的游戏服节点（用 `-sname` 短节点名和同一个 cookie 启动）这样调用：
+
+```erlang
+{ok, Result} = erpc:call('gamebattle@battle', gamebattle, simulate, [port, Request], 35000).
+```
+
+游戏服节点在其他机器上、使用 `-name` 长节点名时，让容器直接使用宿主机网络，节点名写宿主机的 IP：
+
+```bash
+docker build -t gamebattle .
+docker run -d --name battle --init --restart unless-stopped --network host \
+  -e NODE_NAME=gamebattle@10.0.0.5 -e ERLANG_COOKIE="$ERLANG_COOKIE" \
+  -e GAMEBATTLE_CONFIG=/etc/gamebattle/battle.gbcfg \
+  -v "$PWD/config/generated:/etc/gamebattle:ro" gamebattle
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `ERLANG_COOKIE` | 无，必须设置 | 集群 cookie。未设置时容器直接退出。 |
+| `NODE_NAME` | `gamebattle@127.0.0.1` | 节点名。`@` 后面必须是游戏服节点访问这个容器所用的主机名或 IP。 |
+| `NODE_NAME_TYPE` | `name` | `name`（长节点名，`@` 后面必须带点，例如 IP）或 `sname`（短节点名）。必须与游戏服节点一致，两种节点互相连不上。 |
+| `GAMEBATTLE_CONFIG` | 不加载 | 配置包路径。Port 每次启动都会加载它，包括崩溃重启之后。 |
+| `DIST_PORT` | `9100` | 分布式 Erlang 端口，与 epmd 的 `4369` 一起开放给游戏服节点。 |
+
+运维命令：
+
+```bash
+docker exec battle bin/gamebattle eval 'gamebattle_port:ping().'   # {ok, pong}
+docker exec -it battle bin/gamebattle remote_console
+docker logs -f battle
+```
+
+- **安全**：拿到 cookie 并能连上 `4369`、`9100` 的人可以在节点上执行任意代码。这两个端口只开放给内网里的游戏服节点，不要暴露到公网；cookie 使用足够长的随机值。容器以非 root 用户运行，发布目录只读。
+- **故障恢复**：Port 崩溃后由监督树重启，并重新加载配置。10 秒内崩溃超过 5 次时，`gamebattle` 应用停止，节点随之退出，由 Docker 的重启策略拉起新容器。配置包不存在或无效时，节点启动即失败，日志里有 `config_load_failed`。
+- **构建网络**：构建需要访问 Docker Hub、Debian 软件源和 hex.pm。Docker Hub 访问困难时，用 `--build-arg ERLANG_IMAGE=<镜像源>/library/erlang:26 --build-arg RUNTIME_IMAGE=<镜像源>/library/debian:bookworm-slim` 改用镜像源。
 
 ## CLion Debug
 
@@ -161,6 +245,12 @@ true = (Result1 =:= Result2).
 ```erlang
 application:set_env(gamebattle, port_executable, "D:/server/priv/gamebattle_port.exe"),
 application:set_env(gamebattle, port_timeout, 30000).
+```
+
+新启动的 C++ 进程里没有任何配置。设置 `config_path`（或环境变量 `GAMEBATTLE_CONFIG`）后，Port 每次启动都会先加载这个配置包再接请求，崩溃重启后也一样；加载失败时 worker 启动失败。`load_config(port, Path)` 成功后会记下新路径，之后重启加载的仍是最后一次成功加载的包：
+
+```erlang
+application:set_env(gamebattle, config_path, "D:/server/config/battle.gbcfg").
 ```
 
 Port worker 当前一次处理一场战斗，这是刻意的背压边界。需要并发时，应由监督树启动多个带名字或无注册名的 worker，再按 `battle_id` 做一致性分片；不要让多个 Erlang 进程直接争用同一个 Port 的响应。

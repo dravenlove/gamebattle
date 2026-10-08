@@ -53,6 +53,7 @@ The same `seed` and the same input produce exactly the same result and event log
 - `erlang/src/gamebattle_nif.erl`: the NIF module.
 - `erlang/src/gamebattle.erl`: the unified API and a complete sample input.
 - `erlang/src/gamebattle_client.erl`: converts engine results to client protobuf messages and validates client requests.
+- `Dockerfile`, `compose.yaml`, `docker/`, `erlang/config/vm.args.src`: the Docker build and deploy images; see "Docker build and deployment".
 
 ## Building on Windows
 
@@ -101,6 +102,89 @@ cmake --install out/build/linux-runtime-release-nif \
 ```
 
 The production machine or build image needs a C++20 compiler, CMake 3.21+ and Make; when building the NIF, the build machine's Erlang/OTP major version should match the production runtime. If the target system's glibc version differs, compile on an older distribution or one identical to production.
+
+## Docker build and deployment
+
+To avoid installing the toolchain locally, or to produce files on a Linux that matches production, use the `Dockerfile` at the repository root. It has three targets:
+
+| Target | Contents |
+|---|---|
+| `build` | The build environment: compiles the Port, the NIF, the config compiler and the Erlang code, runs the C++ tests and `rebar3 eunit` (including an end-to-end test through the real Port), then assembles the release. Any failing step fails the build. |
+| `artifacts` | Just the outputs, exported to the host with `--output`. |
+| `runtime` (default) | The deploy image: a standalone battle node. It is an Erlang release with its own ERTS, and game nodes call it over distributed Erlang. |
+
+### The build version
+
+```bash
+# Build, run every test and export the Linux outputs to dist/
+docker build --target artifacts --output type=local,dest=dist .
+```
+
+`dist/` contains:
+
+- `priv/gamebattle_port`, `priv/gamebattle_nif.so`: put these in your own Erlang application's `priv/` directory;
+- `bin/gamebattle_config_compiler`: the config compiler;
+- `gamebattle-0.1.0.tar.gz`: the complete battle-node release; unpack it and run `bin/gamebattle foreground` (environment variables below).
+
+The outputs are compiled on Debian bookworm, the base of the `erlang:26` image: the target's glibc must not be older than that, and the NIF works only with OTP 26. To change the OTP version, `RUNTIME_IMAGE` must use the same Debian release as the new image (check with `docker run --rm erlang:27 cat /etc/os-release`):
+
+```bash
+docker build --build-arg ERLANG_IMAGE=erlang:27 --build-arg RUNTIME_IMAGE=debian:bookworm-slim \
+  --target artifacts --output type=local,dest=dist .
+```
+
+The `build` target also works as a tool image for compiling designer config:
+
+```bash
+docker build --target build -t gamebattle-build .
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/config:/config" gamebattle-build \
+  gamebattle_config_compiler --input-dir /config/example --output /config/generated/battle.gbcfg
+```
+
+### The deploy version
+
+Generate `config/generated/battle.gbcfg` as above, then start the battle node:
+
+```bash
+export ERLANG_COOKIE="$(openssl rand -hex 32)"   # the same cookie as the game nodes
+docker compose up -d --build
+```
+
+`compose.yaml` starts a node named `gamebattle@battle`, mounts `config/generated` read-only into the container, and has the Port load `battle.gbcfg` every time it starts. Game nodes on the same Docker network, started with a short name (`-sname`) and the same cookie, call it like this:
+
+```erlang
+{ok, Result} = erpc:call('gamebattle@battle', gamebattle, simulate, [port, Request], 35000).
+```
+
+When the game nodes run on other machines with long names (`-name`), give the container the host's network and use the host's IP in the node name:
+
+```bash
+docker build -t gamebattle .
+docker run -d --name battle --init --restart unless-stopped --network host \
+  -e NODE_NAME=gamebattle@10.0.0.5 -e ERLANG_COOKIE="$ERLANG_COOKIE" \
+  -e GAMEBATTLE_CONFIG=/etc/gamebattle/battle.gbcfg \
+  -v "$PWD/config/generated:/etc/gamebattle:ro" gamebattle
+```
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `ERLANG_COOKIE` | none, required | The cluster cookie. Without it the container exits at once. |
+| `NODE_NAME` | `gamebattle@127.0.0.1` | The node name. The part after `@` must be the host name or IP the game nodes reach this container at. |
+| `NODE_NAME_TYPE` | `name` | `name` (long names: the part after `@` must contain a dot, such as an IP) or `sname` (short names). It must match the game nodes; nodes of the two kinds cannot connect. |
+| `GAMEBATTLE_CONFIG` | nothing loaded | The config package path. The Port loads it every time it starts, including after a crash. |
+| `DIST_PORT` | `9100` | The distributed-Erlang port, to be opened to game nodes together with epmd's `4369`. |
+
+Operations:
+
+```bash
+docker exec battle bin/gamebattle eval 'gamebattle_port:ping().'   # {ok, pong}
+docker exec -it battle bin/gamebattle remote_console
+docker logs -f battle
+```
+
+- **Security**: anyone who has the cookie and can reach `4369` and `9100` can run any code on the node. Open these ports only to game nodes on the internal network, never to the internet, and use a long random cookie. The container runs as a non-root user and the release directory is read-only.
+- **Recovery**: a crashed Port is restarted by the supervisor and reloads the config. More than 5 crashes in 10 seconds stop the `gamebattle` application, the node exits with it, and Docker's restart policy starts a new container. A missing or invalid config package makes the node fail at start-up, with `config_load_failed` in the log.
+- **Build network**: the build needs Docker Hub, the Debian package mirrors and hex.pm. If Docker Hub is hard to reach, point at a mirror with `--build-arg ERLANG_IMAGE=<mirror>/library/erlang:26 --build-arg RUNTIME_IMAGE=<mirror>/library/debian:bookworm-slim`.
 
 ## Debugging in CLion
 
@@ -161,6 +245,12 @@ The Port path and timeout can also be set through application config:
 ```erlang
 application:set_env(gamebattle, port_executable, "D:/server/priv/gamebattle_port.exe"),
 application:set_env(gamebattle, port_timeout, 30000).
+```
+
+A freshly started C++ process has no config at all. With `config_path` (or the `GAMEBATTLE_CONFIG` environment variable) set, the Port loads that package before serving any request every time it starts, including after a crash; if loading fails, the worker fails to start. A successful `load_config(port, Path)` records the new path, so later restarts load the most recently loaded package:
+
+```erlang
+application:set_env(gamebattle, config_path, "D:/server/config/battle.gbcfg").
 ```
 
 A Port worker currently handles one battle at a time; this is a deliberate backpressure boundary. When you need concurrency, have the supervision tree start several named or unregistered workers and shard consistently by `battle_id`; don't let several Erlang processes compete directly for the same Port's responses.
