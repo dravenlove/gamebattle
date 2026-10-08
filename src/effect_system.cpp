@@ -32,7 +32,15 @@ std::int64_t saturating_multiply(std::int64_t left, std::int64_t right) {
 
 } // namespace
 
-EffectSystem::EffectSystem(BattleState& state) : state_(state) {}
+EffectSystem::EffectSystem(BattleState& state) : state_(state) {
+    for (const auto& unit : state_.units) {
+        for (const auto trigger : {Trigger::enemy_activate, Trigger::ally_activate}) {
+            if (!unit.passives_by_trigger.at(static_cast<std::size_t>(trigger)).empty()) {
+                responses_possible_ = true;
+            }
+        }
+    }
+}
 
 void EffectSystem::execute_action(std::size_t actor_index) {
     const Skill* selected = nullptr;
@@ -54,8 +62,109 @@ void EffectSystem::execute_action(std::size_t actor_index) {
     state_.emit(state_.phase, "skill", state_.units[actor_index].side,
                 state_.units[actor_index].config.id, 0, selected->id, 0);
     trigger_owner(actor_index, Trigger::on_attack, actor_index, selected->id);
-    execute_effects(actor_index, actor_index, selected->effects, selected->id,
-                    0, std::nullopt);
+    // Only active skills open a chain; the basic attack resolves immediately.
+    if (selected == &basic || !responses_possible_) {
+        execute_effects(actor_index, actor_index, selected->effects, selected->id,
+                        0, std::nullopt);
+        return;
+    }
+    run_chain(actor_index, *selected);
+}
+
+// Builds a chain on top of an activated skill, then resolves it last-in,
+// first-out. Triggers caused while a link resolves (on_hit, on_damaged, ...)
+// still resolve immediately inside that link; only response passives join
+// the chain.
+void EffectSystem::run_chain(std::size_t actor_index, const Skill& skill) {
+    chain_.clear();
+    chain_.push_back(ChainLink{.source_index = actor_index,
+                               .source_id = skill.id,
+                               .effects = &skill.effects,
+                               .answered_unit = std::nullopt});
+    while (!state_.event_limit && add_response()) {
+    }
+
+    for (std::size_t link = chain_.size(); link-- > 0;) {
+        if (state_.event_limit) {
+            break;
+        }
+        const ChainLink current = chain_[link];
+        if (current.negated) {
+            continue;
+        }
+        const auto& source = state_.units[current.source_index];
+        if (chain_.size() > 1 && !source.alive()) {
+            // A response killed this link's owner before it could resolve.
+            state_.emit(state_.phase, "fizzle", source.side, source.config.id, 0,
+                        current.source_id, static_cast<std::int64_t>(link + 1));
+            continue;
+        }
+        resolving_link_ = link;
+        execute_effects(current.source_index, current.source_index,
+                        *current.effects, current.source_id, 0,
+                        current.answered_unit);
+    }
+    resolving_link_.reset();
+    chain_.clear();
+}
+
+// Offers the top link to responders: first the side that did not add it, then
+// that side's allies. Each unit adds at most one link per chain, which also
+// bounds the chain length. Returns false once nobody responds.
+bool EffectSystem::add_response() {
+    const auto answered = chain_.back().source_index;
+    const auto answered_side = state_.units[answered].side;
+    for (const auto side : {other(answered_side), answered_side}) {
+        const auto trigger = side == answered_side ? Trigger::ally_activate
+                                                   : Trigger::enemy_activate;
+        for (const auto unit_index : state_.response_order(side)) {
+            const bool already_linked = std::any_of(
+                chain_.begin(), chain_.end(), [&](const ChainLink& link) {
+                    return link.source_index == unit_index;
+                });
+            if (already_linked) {
+                continue;
+            }
+            auto& unit = state_.units[unit_index];
+            for (const auto passive_index :
+                 unit.passives_by_trigger.at(static_cast<std::size_t>(trigger))) {
+                const auto& passive = unit.config.passives[passive_index];
+                if (!state_.random.roll(passive.chance_bp)) {
+                    continue;
+                }
+                auto& count = unit.passive_triggers[passive.id];
+                if (passive.max_triggers_per_round > 0 &&
+                    count >= passive.max_triggers_per_round) {
+                    continue;
+                }
+                ++count;
+                chain_.push_back(ChainLink{.source_index = unit_index,
+                                           .source_id = passive.id,
+                                           .effects = &passive.effects,
+                                           .answered_unit = answered});
+                state_.emit(state_.phase, "chain", unit.side, unit.config.id,
+                            state_.units[answered].config.id, passive.id,
+                            static_cast<std::int64_t>(chain_.size()));
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void EffectSystem::negate_answered_link(std::size_t source_index) {
+    if (!resolving_link_.has_value() || *resolving_link_ == 0) {
+        return;
+    }
+    auto& answered = chain_[*resolving_link_ - 1];
+    if (answered.negated) {
+        return;
+    }
+    answered.negated = true;
+    const auto& source = state_.units[source_index];
+    state_.emit(state_.phase, "negate", source.side, source.config.id,
+                state_.units[answered.source_index].config.id, answered.source_id,
+                static_cast<std::int64_t>(*resolving_link_));
 }
 
 void EffectSystem::execute_effects(
@@ -70,6 +179,10 @@ void EffectSystem::execute_effects(
         return;
     }
     for (const auto& effect : effects) {
+        if (effect.kind == EffectKind::negate) {
+            negate_answered_link(source_index);
+            continue;
+        }
         Effect scaled_effect;
         const Effect* executable = &effect;
         if (magnitude_stacks > 1 &&
@@ -111,6 +224,8 @@ void EffectSystem::execute_effects(
             case EffectKind::remove_buff:
                 remove_buff(source_index, target_index,
                             executable->remove_buff_id, source_id);
+                break;
+            case EffectKind::negate:
                 break;
             }
         }

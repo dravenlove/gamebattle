@@ -62,6 +62,8 @@ Trigger parse_trigger(std::string_view value) {
     if (value == "unit_death") return Trigger::unit_death;
     if (value == "after_action") return Trigger::after_action;
     if (value == "round_end") return Trigger::round_end;
+    if (value == "enemy_activate") return Trigger::enemy_activate;
+    if (value == "ally_activate") return Trigger::ally_activate;
     throw term::DecodeError("passive.trigger has an unsupported value");
 }
 
@@ -71,8 +73,9 @@ EffectKind parse_effect_kind(std::string_view value) {
     if (value == "add_buff") return EffectKind::add_buff;
     if (value == "remove_buff") return EffectKind::remove_buff;
     if (value == "direct_damage") return EffectKind::direct_damage;
+    if (value == "negate") return EffectKind::negate;
     throw term::DecodeError(
-        "effect.type must be damage, direct_damage, heal, add_buff, or remove_buff");
+        "effect.type must be damage, direct_damage, heal, add_buff, remove_buff, or negate");
 }
 
 Attribute parse_attribute(std::string_view value) {

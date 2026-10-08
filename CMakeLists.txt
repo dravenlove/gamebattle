@@ -77,12 +77,33 @@ if(GAMEBATTLE_BUILD_TESTS)
                 config/example/passives.csv
             VERBATIM
         )
-        add_custom_target(gamebattle_test_config DEPENDS ${GAMEBATTLE_TEST_CONFIG})
+        set(GAMEBATTLE_CHAIN_CONFIG ${GAMEBATTLE_TEST_CONFIG_DIR}/chain.gbcfg)
+        set(GAMEBATTLE_CHAIN_FIXTURE ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_chain)
+        add_custom_command(
+            OUTPUT ${GAMEBATTLE_CHAIN_CONFIG}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${GAMEBATTLE_TEST_CONFIG_DIR}
+            COMMAND $<TARGET_FILE:gamebattle_config_compiler>
+                --input-dir ${GAMEBATTLE_CHAIN_FIXTURE}
+                --output ${GAMEBATTLE_CHAIN_CONFIG}
+            DEPENDS
+                gamebattle_config_compiler
+                tools/config_compiler.cpp
+                tests/fixtures/config_chain/buffs.csv
+                tests/fixtures/config_chain/buff_modifiers.csv
+                tests/fixtures/config_chain/buff_reactions.csv
+                tests/fixtures/config_chain/effects.csv
+                tests/fixtures/config_chain/skills.csv
+                tests/fixtures/config_chain/passives.csv
+            VERBATIM
+        )
+        add_custom_target(gamebattle_test_config
+            DEPENDS ${GAMEBATTLE_TEST_CONFIG} ${GAMEBATTLE_CHAIN_CONFIG})
         add_executable(gamebattle_config_tests tests/config_store_test.cpp)
         add_dependencies(gamebattle_config_tests gamebattle_test_config)
         target_link_libraries(gamebattle_config_tests PRIVATE gamebattle_core)
         target_compile_definitions(gamebattle_config_tests PRIVATE
-            GAMEBATTLE_TEST_CONFIG_PATH="${GAMEBATTLE_TEST_CONFIG}")
+            GAMEBATTLE_TEST_CONFIG_PATH="${GAMEBATTLE_TEST_CONFIG}"
+            GAMEBATTLE_CHAIN_CONFIG_PATH="${GAMEBATTLE_CHAIN_CONFIG}")
         add_test(NAME gamebattle_config_tests COMMAND gamebattle_config_tests)
 
         add_executable(gamebattle_config_cycle_loader_test
@@ -107,6 +128,21 @@ if(GAMEBATTLE_BUILD_TESTS)
             gamebattle_config_compiler_invalid_reference
             gamebattle_config_compiler_invalid_buff_cycle
             PROPERTIES WILL_FAIL TRUE)
+        # These must fail for the stated reason, not just fail.
+        add_test(NAME gamebattle_config_compiler_invalid_negate_skill
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_invalid_negate_skill
+                --check-only)
+        set_tests_properties(gamebattle_config_compiler_invalid_negate_skill
+            PROPERTIES PASS_REGULAR_EXPRESSION
+                "skills.csv:2: negate effects are only valid in response passives")
+        add_test(NAME gamebattle_config_compiler_invalid_response_reaction
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_invalid_response_reaction
+                --check-only)
+        set_tests_properties(gamebattle_config_compiler_invalid_response_reaction
+            PROPERTIES PASS_REGULAR_EXPRESSION
+                "buff_reactions.csv:2: buff reactions cannot use a response trigger")
     endif()
 endif()
 

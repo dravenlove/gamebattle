@@ -121,8 +121,10 @@ struct Tables {
 const std::unordered_map<std::string, std::uint8_t> kEffectKinds{
     {"damage", std::uint8_t{0}}, {"heal", std::uint8_t{1}},
     {"add_buff", std::uint8_t{2}}, {"remove_buff", std::uint8_t{3}},
-    {"direct_damage", std::uint8_t{4}}
+    {"direct_damage", std::uint8_t{4}}, {"negate", std::uint8_t{5}}
 };
+
+constexpr std::uint8_t kNegateEffect = 5;
 
 const std::unordered_map<std::string, std::uint8_t> kTargetRules{
     {"self", std::uint8_t{0}}, {"trigger_unit", std::uint8_t{1}},
@@ -137,8 +139,15 @@ const std::unordered_map<std::string, std::uint8_t> kTriggers{
     {"before_action", std::uint8_t{2}}, {"on_attack", std::uint8_t{3}},
     {"on_hit", std::uint8_t{4}}, {"on_damaged", std::uint8_t{5}},
     {"unit_death", std::uint8_t{6}}, {"after_action", std::uint8_t{7}},
-    {"round_end", std::uint8_t{8}}
+    {"round_end", std::uint8_t{8}},
+    {"enemy_activate", std::uint8_t{9}}, {"ally_activate", std::uint8_t{10}}
 };
+
+// Response triggers only fire while a skill chain is built, so only passives
+// may use them.
+bool is_response_trigger(std::uint8_t trigger) {
+    return trigger == 9 || trigger == 10;
+}
 
 const std::unordered_map<std::string, std::uint8_t> kLifetimes{
     {"finite", std::uint8_t{0}}, {"permanent", std::uint8_t{1}}
@@ -541,6 +550,9 @@ Tables parse_tables(const fs::path& directory) {
             row, "duration", integer(row, "duration", buff.permanent ? 0 : 1),
             0, 10000));
         buff.decrement_on = enum_value(row, "decrement_on", kTriggers);
+        if (is_response_trigger(buff.decrement_on)) {
+            row_error(row, "decrement_on cannot be a response trigger");
+        }
         buff.max_stacks = static_cast<std::int32_t>(bounded(
             row, "max_stacks", integer(row, "max_stacks", 1), 1, 1000));
         buff.stack_policy = enum_value(row, "stack_policy", kStackPolicies);
@@ -594,6 +606,9 @@ Tables parse_tables(const fs::path& directory) {
         reaction.sequence = static_cast<std::uint32_t>(bounded(
             row, "sequence", integer(row, "sequence", 0, false), 1, 4096));
         reaction.trigger = enum_value(row, "trigger", kTriggers);
+        if (is_response_trigger(reaction.trigger)) {
+            row_error(row, "buff reactions cannot use a response trigger");
+        }
         reaction.source = enum_value(row, "source", kEffectSources);
         reaction.stack_scaling =
             enum_value(row, "stack_scaling", kStackScalings);
@@ -665,6 +680,11 @@ Tables parse_tables(const fs::path& directory) {
                                   ": effect_ids references missing effect " +
                                   std::to_string(effect_id));
             }
+            if (tables.effects.at(effect_id).kind == kNegateEffect) {
+                throw ConfigError(reaction.source_file + ":" +
+                                  std::to_string(reaction.source_line) +
+                                  ": negate effects are only valid in response passives");
+            }
         }
     }
 
@@ -726,6 +746,9 @@ Tables parse_tables(const fs::path& directory) {
                 row_error(row, "effect_ids references missing effect " +
                                std::to_string(id));
             }
+            if (tables.effects.at(id).kind == kNegateEffect) {
+                row_error(row, "negate effects are only valid in response passives");
+            }
         }
         if (skill.name.size() > kMaxStringBytes) {
             row_error(row, "name exceeds the 1 MiB limit");
@@ -750,6 +773,11 @@ Tables parse_tables(const fs::path& directory) {
             if (!tables.effects.contains(id)) {
                 row_error(row, "effect_ids references missing effect " +
                                std::to_string(id));
+            }
+            if (tables.effects.at(id).kind == kNegateEffect &&
+                !is_response_trigger(passive.trigger)) {
+                row_error(row, "negate effects require an enemy_activate or "
+                               "ally_activate trigger");
             }
         }
         if (passive.name.size() > kMaxStringBytes) {

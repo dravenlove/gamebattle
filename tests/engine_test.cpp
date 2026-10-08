@@ -661,6 +661,267 @@ void test_term_codec_and_wire_errors() {
     assert(gamebattle::term::as_string(error_tuple->value[0], "error") == "error");
 }
 
+// Chain tests use 100% hit, 0% crit and 100% trigger chances, so they consume
+// no random numbers and every damage number below is exact.
+gamebattle::Skill big_hit() {
+    gamebattle::Skill skill;
+    skill.id = 5101;
+    skill.name = "big_hit";
+    skill.priority = 10;
+    skill.effects.push_back(gamebattle::Effect{
+        .kind = gamebattle::EffectKind::damage,
+        .target = gamebattle::TargetRule::enemy_front,
+        .target_count = 1,
+        .attack_bp = 30000
+    });
+    return skill;
+}
+
+gamebattle::Effect negate_effect() {
+    gamebattle::Effect effect;
+    effect.kind = gamebattle::EffectKind::negate;
+    effect.target = gamebattle::TargetRule::trigger_unit;
+    effect.attack_bp = 0;
+    return effect;
+}
+
+gamebattle::Passive response(std::uint32_t id, gamebattle::Trigger trigger,
+                             gamebattle::Effect effect) {
+    gamebattle::Passive passive;
+    passive.id = id;
+    passive.name = "response";
+    passive.trigger = trigger;
+    passive.effects.push_back(std::move(effect));
+    return passive;
+}
+
+// Attacker 5001 (speed 200, attack 100) acts first with big_hit (300 damage);
+// defender 6001 has 5000 hp and no skills. One round only.
+gamebattle::BattleRequest chain_request() {
+    gamebattle::BattleRequest request;
+    request.battle_id = 93001;
+    request.seed = 7;
+    request.max_rounds = 1;
+    request.max_events = 1000;
+    auto attacker = hero(5001, 1, 200, 1000, 100, 0);
+    attacker.skills.push_back(big_hit());
+    request.attacker.units.push_back(std::move(attacker));
+    request.defender.units.push_back(hero(6001, 1, 100, 5000, 50, 0));
+    return request;
+}
+
+const gamebattle::Event* find_event(const gamebattle::BattleResult& result,
+                                    const std::string& type,
+                                    gamebattle::UnitId actor) {
+    for (const auto& event : result.events) {
+        if (event.type == type && event.actor == actor) {
+            return &event;
+        }
+    }
+    return nullptr;
+}
+
+std::size_t count_events(const gamebattle::BattleResult& result,
+                         const std::string& type, std::uint32_t source_id) {
+    std::size_t count = 0;
+    for (const auto& event : result.events) {
+        count += event.type == type && event.source_id == source_id ? 1 : 0;
+    }
+    return count;
+}
+
+void test_chain_negate_and_counter_negate() {
+    // The defender answers the skill with a negate: the skill does nothing.
+    auto request = chain_request();
+    request.defender.units[0].passives.push_back(
+        response(7601, gamebattle::Trigger::enemy_activate, negate_effect()));
+    const auto negated = gamebattle::Engine{}.simulate(request);
+    const auto* chain = find_event(negated, "chain", 6001);
+    const auto* negate = find_event(negated, "negate", 6001);
+    assert(chain != nullptr && chain->target == 5001 && chain->source_id == 7601 &&
+           chain->value == 2);
+    assert(negate != nullptr && negate->target == 5001 && negate->source_id == 5101 &&
+           negate->value == 1 && chain->seq < negate->seq);
+    assert(count_events(negated, "damage", 5101) == 0);
+
+    // An attacker-side ally answers the negate with its own negate. Links
+    // resolve 3 -> 2 -> 1: link 3 cancels link 2, so the skill (link 1) hits.
+    auto ally = hero(5002, 2, 150, 1000, 100, 0);
+    ally.passives.push_back(
+        response(7602, gamebattle::Trigger::enemy_activate, negate_effect()));
+    request.attacker.units.push_back(std::move(ally));
+    const auto countered = gamebattle::Engine{}.simulate(request);
+    const auto* first = find_event(countered, "chain", 6001);
+    const auto* second = find_event(countered, "chain", 5002);
+    const auto* cancel = find_event(countered, "negate", 5002);
+    assert(first != nullptr && first->value == 2);
+    assert(second != nullptr && second->target == 6001 && second->value == 3);
+    assert(cancel != nullptr && cancel->target == 6001 && cancel->source_id == 7601 &&
+           cancel->value == 2);
+    assert(find_event(countered, "negate", 6001) == nullptr);
+    assert(count_events(countered, "damage", 5101) == 1);
+    const auto* hit = find_event(countered, "damage", 5001);
+    assert(hit != nullptr && hit->source_id == 5101 && hit->value == 300);
+    assert(first->seq < second->seq && second->seq < cancel->seq &&
+           cancel->seq < hit->seq);
+
+    const auto again = gamebattle::Engine{}.simulate(request);
+    assert(gamebattle::term::encode(gamebattle::wire::encode_result(countered)) ==
+           gamebattle::term::encode(gamebattle::wire::encode_result(again)));
+}
+
+void test_chain_ally_support_resolves_first() {
+    // An ally answers the skill with an attack buff on the caster. Its link
+    // resolves before the skill, so the skill hits with the buffed attack.
+    auto rally = std::make_shared<gamebattle::BuffSpec>();
+    rally->id = 8601;
+    rally->name = "rally";
+    rally->modifiers.push_back({.attribute = gamebattle::Attribute::attack,
+                                .operation = gamebattle::ModifierOperation::add,
+                                .value = 1000});
+    gamebattle::Effect add_rally;
+    add_rally.kind = gamebattle::EffectKind::add_buff;
+    add_rally.target = gamebattle::TargetRule::trigger_unit;
+    add_rally.attack_bp = 0;
+    add_rally.buff = rally;
+
+    auto request = chain_request();
+    auto ally = hero(5002, 2, 150, 1000, 100, 0);
+    ally.passives.push_back(
+        response(7603, gamebattle::Trigger::ally_activate, std::move(add_rally)));
+    request.attacker.units.push_back(std::move(ally));
+    const auto result = gamebattle::Engine{}.simulate(request);
+
+    const auto* chain = find_event(result, "chain", 5002);
+    const auto* buffed = find_event(result, "buff_add", 5002);
+    const auto* hit = find_event(result, "damage", 5001);
+    assert(chain != nullptr && chain->target == 5001 && chain->value == 2);
+    assert(buffed != nullptr && buffed->target == 5001);
+    assert(hit != nullptr && hit->source_id == 5101 && hit->value == 3300);
+    assert(chain->seq < buffed->seq && buffed->seq < hit->seq);
+}
+
+void test_chain_fizzles_when_caster_dies() {
+    // The defender's response kills the caster before the skill resolves.
+    auto request = chain_request();
+    request.defender.units[0].passives.push_back(response(
+        7604, gamebattle::Trigger::enemy_activate,
+        gamebattle::Effect{.kind = gamebattle::EffectKind::damage,
+                           .target = gamebattle::TargetRule::trigger_unit,
+                           .target_count = 1,
+                           .attack_bp = 1'000'000}));
+    const auto result = gamebattle::Engine{}.simulate(request);
+    const auto* death = find_event(result, "death", 6001);
+    const auto* fizzle = find_event(result, "fizzle", 5001);
+    assert(death != nullptr && death->target == 5001);
+    assert(fizzle != nullptr && fizzle->source_id == 5101 && fizzle->value == 1 &&
+           death->seq < fizzle->seq);
+    assert(count_events(result, "damage", 5101) == 0);
+    assert(result.winner == gamebattle::Winner::defender);
+}
+
+void test_chain_rules_are_validated() {
+    const auto rejected = [](const gamebattle::BattleRequest& request) {
+        try {
+            static_cast<void>(gamebattle::Engine{}.simulate(request));
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+
+    auto negate_skill = chain_request();
+    negate_skill.attacker.units[0].skills[0].effects.push_back(negate_effect());
+    assert(rejected(negate_skill));
+
+    auto negate_on_hit = chain_request();
+    negate_on_hit.attacker.units[0].passives.push_back(
+        response(7605, gamebattle::Trigger::on_hit, negate_effect()));
+    assert(rejected(negate_on_hit));
+
+    const auto with_buff = [](gamebattle::Trigger reaction_trigger,
+                              gamebattle::Trigger decrement_on) {
+        auto buff = std::make_shared<gamebattle::BuffSpec>();
+        buff->id = 8602;
+        buff->name = "response_buff";
+        buff->lifetime.decrement_on = decrement_on;
+        gamebattle::BuffReaction reaction;
+        reaction.trigger = reaction_trigger;
+        reaction.effects.push_back(gamebattle::Effect{});
+        buff->reactions.push_back(std::move(reaction));
+        gamebattle::Effect add;
+        add.kind = gamebattle::EffectKind::add_buff;
+        add.target = gamebattle::TargetRule::self;
+        add.buff = std::move(buff);
+        auto request = chain_request();
+        request.attacker.units[0].passives.push_back(
+            response(7606, gamebattle::Trigger::battle_start, std::move(add)));
+        return request;
+    };
+    assert(!rejected(with_buff(gamebattle::Trigger::round_end,
+                               gamebattle::Trigger::round_end)));
+    assert(rejected(with_buff(gamebattle::Trigger::enemy_activate,
+                              gamebattle::Trigger::round_end)));
+    assert(rejected(with_buff(gamebattle::Trigger::round_end,
+                              gamebattle::Trigger::ally_activate)));
+}
+
+void test_wire_parses_chain_names() {
+    using gamebattle::term::Value;
+    const auto unit = [](std::int64_t id, std::int64_t speed, Value::List skills,
+                         Value::List passives) {
+        return Value::object({
+            {"id", Value(id)},
+            {"kind", Value::atom("hero")},
+            {"position", Value(std::int64_t{1})},
+            {"final_stats", Value::object({
+                {"hp", Value(std::int64_t{5000})},
+                {"attack", Value(std::int64_t{100})},
+                {"defense", Value(std::int64_t{0})},
+                {"speed", Value(speed)}
+            })},
+            {"skills", Value::list(std::move(skills))},
+            {"passives", Value::list(std::move(passives))}
+        });
+    };
+    Value skill = Value::object({
+        {"id", Value(std::int64_t{5101})},
+        {"name", Value::binary("big_hit")},
+        {"effects", Value::list({Value::object({
+            {"type", Value::atom("damage")},
+            {"attack_bp", Value(std::int64_t{30000})}
+        })})}
+    });
+    Value counter = Value::object({
+        {"id", Value(std::int64_t{7601})},
+        {"name", Value::binary("counter_spell")},
+        {"trigger", Value::atom("enemy_activate")},
+        {"effects", Value::list({Value::object({
+            {"type", Value::atom("negate")},
+            {"target", Value::atom("trigger_unit")}
+        })})}
+    });
+    const auto request = Value::object({
+        {"battle_id", Value(std::int64_t{93002})},
+        {"seed", Value(std::int64_t{7})},
+        {"max_rounds", Value(std::int64_t{1})},
+        {"attacker", Value::object({
+            {"formation", Value::atom("test")},
+            {"units", Value::list({unit(5001, 200, Value::List{std::move(skill)}, {})})}
+        })},
+        {"defender", Value::object({
+            {"formation", Value::atom("test")},
+            {"units", Value::list({unit(6001, 100, {}, Value::List{std::move(counter)})})}
+        })}
+    });
+    const auto parsed = gamebattle::wire::parse_request(request);
+    const auto& passive = parsed.defender.units.front().passives.front();
+    assert(passive.trigger == gamebattle::Trigger::enemy_activate);
+    assert(passive.effects.front().kind == gamebattle::EffectKind::negate);
+    const auto result = gamebattle::Engine{}.simulate(parsed);
+    assert(find_event(result, "negate", 6001) != nullptr);
+}
+
 } // namespace
 
 int main() {
@@ -673,6 +934,11 @@ int main() {
     test_initial_hp_carryover();
     test_initially_defeated_and_invalid_carryover();
     test_term_codec_and_wire_errors();
+    test_chain_negate_and_counter_negate();
+    test_chain_ally_support_resolves_first();
+    test_chain_fizzles_when_caster_dies();
+    test_chain_rules_are_validated();
+    test_wire_parses_chain_names();
     std::cout << "all gamebattle tests passed\n";
     return 0;
 }

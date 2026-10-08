@@ -117,10 +117,61 @@ void test_config_store_and_wire_ids() {
     assert(gamebattle::term::as_string(response_tuple->value[0], "status") == "ok");
 }
 
+// tests/fixtures/config_chain: skill 501 and the response passives 711
+// (enemy_activate -> negate) and 712 (ally_activate -> buff the caster).
+void test_chain_config_round_trip() {
+    using gamebattle::term::Value;
+    const auto store = gamebattle::ConfigStore::load_file(GAMEBATTLE_CHAIN_CONFIG_PATH);
+    const auto& counter = store.require_passive(711);
+    assert(counter.trigger == gamebattle::Trigger::enemy_activate);
+    assert(counter.effects.front().kind == gamebattle::EffectKind::negate);
+    const auto& support = store.require_passive(712);
+    assert(support.trigger == gamebattle::Trigger::ally_activate);
+    assert(support.effects.front().buff != nullptr &&
+           support.effects.front().buff->id == 802);
+
+    const auto unit = [](std::int64_t id, std::int64_t speed,
+                         Value::List skill_ids, Value::List passive_ids) {
+        return Value::object({
+            {"id", Value(id)},
+            {"kind", Value::atom("hero")},
+            {"position", Value(std::int64_t{1})},
+            {"final_stats", Value::object({
+                {"hp", Value(std::int64_t{5000})}, {"attack", Value(std::int64_t{100})},
+                {"defense", Value(std::int64_t{0})}, {"speed", Value(speed)}
+            })},
+            {"skill_ids", Value::list(std::move(skill_ids))},
+            {"passive_ids", Value::list(std::move(passive_ids))}
+        });
+    };
+    const auto request = Value::object({
+        {"battle_id", Value(std::int64_t{91002})},
+        {"seed", Value(std::int64_t{1})},
+        {"max_rounds", Value(std::int64_t{1})},
+        {"attacker", Value::object({
+            {"formation", Value::atom("test")},
+            {"units", Value::list({unit(3001, 200, {Value(std::int64_t{501})}, {})})}
+        })},
+        {"defender", Value::object({
+            {"formation", Value::atom("test")},
+            {"units", Value::list({unit(4001, 100, {}, {Value(std::int64_t{711})})})}
+        })}
+    });
+    const auto parsed = gamebattle::wire::parse_request(request, &store);
+    const auto result = gamebattle::Engine{}.simulate(parsed);
+    bool negated = false;
+    for (const auto& event : result.events) {
+        negated = negated || (event.type == "negate" && event.actor == 4001 &&
+                              event.source_id == 501);
+    }
+    assert(negated);
+}
+
 } // namespace
 
 int main() {
     test_config_store_and_wire_ids();
+    test_chain_config_round_trip();
     std::cout << "all gamebattle config tests passed\n";
     return 0;
 }

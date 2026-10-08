@@ -21,6 +21,7 @@ Parse and validate both formations
   -> every unit on the first side acts, ordered by speed and position
        -> before_action buffs / passives
        -> skills are rolled one by one in priority order; basic attack if none triggers
+       -> an activated skill first opens a chain: both sides' response passives join in turn, and the last to join resolves first
        -> target selection, hit, damage, crit
        -> on_attack / on_hit / on_damaged / unit_death passives
        -> passives can deal damage, heal, add or remove buffs
@@ -394,12 +395,40 @@ Supported skill effects:
 - `heal`: attack ratio plus a flat value.
 - `add_buff`: adds, stacks or refreshes according to the buff's `StackingPolicy`.
 - `remove_buff`: requires a non-zero `buff_id` and removes only that buff; there's currently no implicit "clear everything" wildcard.
+- `negate`: cancels the chain link this response answered (the skill or the previous response). Only valid in `enemy_activate` and `ally_activate` passives; see "Chains and responses" below.
 
 Supported target rules: `self`, `trigger_unit`, `enemy_front`, `enemy_lowest_hp`, `ally_lowest_hp`, `all_enemies`, `all_allies`. `trigger_unit` is for things like "the attacker poisons the unit it just hit" or "the unit hit counterattacks this attacker".
 
-Passives and buff reactions share the trigger points `battle_start`, `round_start`, `before_action`, `on_attack`, `on_hit`, `on_damaged`, `unit_death`, `after_action` and `round_end`. Setting `max_triggers_per_round` on chained effects is strongly recommended; the framework also has two safeguards, a trigger depth of 32 and `max_events`.
+Passives and buff reactions share the trigger points `battle_start`, `round_start`, `before_action`, `on_attack`, `on_hit`, `on_damaged`, `unit_death`, `after_action` and `round_end`. Setting `max_triggers_per_round` on chained effects is strongly recommended; the framework also has two safeguards, a trigger depth of 32 and `max_events`. Passives can also use the two response triggers `enemy_activate` and `ally_activate`.
 
 A buff's duration counter can be set to decrement after a chosen trigger; permanent buffs don't decrement. Damage over time, healing over time, counterattacks on being hit and so on are all expressed as reactions running ordinary effects, rather than handled by separate tick fields and code paths.
+
+### Chains and responses
+
+When an active skill (not a basic attack) is activated, it doesn't resolve immediately. It opens a **chain** first, with rules similar to Yu-Gi-Oh:
+
+1. The skill itself is link 1.
+2. Ask who wants to respond to the top link: first the other side (`enemy_activate` passives), then the other units on the same side (`ally_activate` passives). Within a side, units are asked in speed, position and ID order; the first passive that passes its chance roll joins the chain as the new top link, and the asking starts over.
+3. Each unit adds at most one link per chain; asking stops when nobody responds.
+4. Links resolve in reverse, starting from the last one added. `negate` makes the link it answered be skipped; if a link's owner has died by the time it would resolve, that link fizzles.
+5. Damage dealt while a link resolves still triggers ordinary passives such as `on_hit` and `on_damaged` immediately, exactly as before.
+
+A response link's `trigger_unit` is the owner of the link it answered, so "counterattack the caster" is `target => trigger_unit`, and so is "buff the ally who cast".
+
+```erlang
+%% When the other side activates a skill, negate it with 50% chance, at most once per round
+#{id => 711, name => <<"counter_spell">>, trigger => enemy_activate,
+  chance_bp => 5000, max_triggers_per_round => 1,
+  effects => [#{type => negate}]}.
+
+%% When an ally activates a skill, buff the caster's attack first; the skill then resolves with the boosted attack (a combo)
+#{id => 712, name => <<"support">>, trigger => ally_activate,
+  effects => [#{type => add_buff, target => trigger_unit, buff => RallyBuff}]}.
+```
+
+- When no unit has a response passive, skills resolve exactly as before and consume no extra random numbers, so results for old requests are byte-identical.
+- Response triggers can only be used by passives; `negate` can only appear in response passives; buff reactions and `decrement_on` can't use response triggers. Violations make the request return `invalid_request`, and the config compiler and loader reject them too.
+- `chance_bp` and `max_triggers_per_round` apply as usual; a response that gets negated still counts as a trigger.
 
 ## Results and battle reports
 
@@ -420,6 +449,14 @@ Success returns `{ok, Result}`, where:
 ```
 
 Events carry a strictly increasing `seq`, plus `round`, `phase`, `type`, `actor`, `target`, `source_id`, `value`, HP before and after the hit, and a crit flag. The client can play back a battle report from the event stream alone, while the server settles based on `units` and `winner`.
+
+Chains produce the following events, only when someone responds:
+
+| `type` | `actor` | `target` | `source_id` | `value` |
+|---|---|---|---|---|
+| `chain` | The responder | The unit it answered | The response passive's ID | Link number (from 2) |
+| `negate` | The negating unit | Owner of the negated link | The negated skill or passive ID | Number of the negated link |
+| `fizzle` | Owner of the fizzled link | 0 | The fizzled skill or passive ID | Link number |
 
 ## The explicit boundaries of v1
 

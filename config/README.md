@@ -36,6 +36,8 @@ buffs -> buff_modifiers
 - `direct_damage` 是不经过命中、暴击、防御、增伤和减伤公式的直接伤害；持续伤害可以通过 reaction 引用它。
 - `add_buff` 效果必须填写 `buff_id`。
 - `remove_buff` 效果必须填写 `remove_buff_id`。
+- `enemy_activate`、`ally_activate` 是被动专用的响应触发点（规则见根目录 README 的「连锁与响应」），不能用于 `buff_reactions.csv` 的 `trigger` 和 `buffs.csv` 的 `decrement_on`。
+- `negate` 效果无效响应所回应的连锁环节，只能被 `trigger` 为 `enemy_activate` 或 `ally_activate` 的被动引用；技能和 Buff reaction 都不能引用它。`target` 列对它没有作用，可以填 `trigger_unit`。
 - 非对应效果的 `buff_id`/`remove_buff_id` 必须为 `0` 或留空。
 - 空白数值使用编译器默认值，但列本身不能删除或改名。
 - ID 在各自表内必须唯一；生成时会检查所有跨表引用。

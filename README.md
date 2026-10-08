@@ -21,6 +21,7 @@
   -> 先手方全部对象依速度、位置行动
        -> before_action Buff / 被动
        -> 按技能优先级逐个判定触发，未触发则普攻
+       -> 发动主动技能时先开启连锁：双方的响应被动依次加入，后加入的先结算
        -> 选目标、命中、伤害、暴击
        -> on_attack / on_hit / on_damaged / unit_death 被动
        -> 被动可以造成伤害、治疗、添加或移除 Buff
@@ -394,12 +395,40 @@ Waves = [
 - `heal`：攻击倍率加固定值。
 - `add_buff`：按照 Buff 的 `StackingPolicy` 添加、叠层或刷新。
 - `remove_buff`：必须提供非零 `buff_id`，只移除指定 Buff；当前不提供隐式“清全部”通配语义。
+- `negate`：无效这个响应所回应的连锁环节（技能或上一个响应）。只能用在 `enemy_activate`、`ally_activate` 被动里，见下面的「连锁与响应」。
 
 目标规则支持 `self`、`trigger_unit`、`enemy_front`、`enemy_lowest_hp`、`ally_lowest_hp`、`all_enemies`、`all_allies`。`trigger_unit` 用于“命中者给本次受击者挂毒”或“受击者反击本次攻击者”。
 
-被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；框架另有 32 层触发深度和 `max_events` 两道保险。
+被动和 Buff Reaction 共用 `battle_start`、`round_start`、`before_action`、`on_attack`、`on_hit`、`on_damaged`、`unit_death`、`after_action`、`round_end` 触发点。强烈建议连锁效果设置 `max_triggers_per_round`；框架另有 32 层触发深度和 `max_events` 两道保险。被动还可以使用 `enemy_activate`、`ally_activate` 两个响应触发点。
 
 Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不递减。周期伤害、持续治疗、受击反击等都表示为 Reaction 执行普通 Effect，不再由单独的 Tick 字段和代码路径处理。
+
+### 连锁与响应
+
+主动技能（不含普攻）发动后不会立刻结算，而是先开启一条**连锁**，规则类似游戏王：
+
+1. 技能本身是第 1 个环节。
+2. 询问谁要响应最上面的环节：先问对方（`enemy_activate` 被动），再问同一方的其他单位（`ally_activate` 被动）。同一方内按速度、站位、ID 的顺序询问，第一个通过概率判定的被动加入连锁，成为新的最上面的环节，然后重新询问。
+3. 每个单位在一条连锁里最多加入一个环节；没有人响应时停止询问。
+4. 从最后加入的环节开始倒序结算。`negate` 让它回应的那个环节被跳过；某个环节的发动者如果在轮到它结算前已经死亡，这个环节失效。
+5. 环节结算时造成的伤害仍然会立即触发 `on_hit`、`on_damaged` 等普通被动，这部分和以前一样。
+
+响应环节的 `trigger_unit` 是它所回应环节的发动者，所以"反击施法者"写 `target => trigger_unit`，"给施法的队友加攻击力"也一样。
+
+```erlang
+%% 对方发动技能时，50% 概率无效它，每回合最多一次
+#{id => 711, name => <<"counter_spell">>, trigger => enemy_activate,
+  chance_bp => 5000, max_triggers_per_round => 1,
+  effects => [#{type => negate}]}.
+
+%% 队友发动技能时，先给施法者加攻击力，技能再用加成后的攻击力结算（联动）
+#{id => 712, name => <<"support">>, trigger => ally_activate,
+  effects => [#{type => add_buff, target => trigger_unit, buff => RallyBuff}]}.
+```
+
+- 没有任何单位带响应被动时，技能和以前完全一样地结算，不多消耗任何随机数，旧请求的结果逐字节不变。
+- 响应触发点只能用在被动上；`negate` 只能出现在响应被动里；Buff Reaction 和 `decrement_on` 不能使用响应触发点。违反时请求返回 `invalid_request`，配置编译器和加载器也会拒绝。
+- `chance_bp` 和 `max_triggers_per_round` 照常生效；被无效的响应仍然计入触发次数。
 
 ## 结果与战报
 
@@ -420,6 +449,14 @@ Buff 的持续计数可以选择在哪一种 Trigger 后递减；永久 Buff 不
 ```
 
 事件包含严格递增的 `seq`，以及 `round`、`phase`、`type`、`actor`、`target`、`source_id`、`value`、受击前后 HP 和暴击标记。前端可以只依赖事件流播放战报，服务端则以 `units` 和 `winner` 做最终结算。
+
+连锁只有在出现响应时才产生以下事件：
+
+| `type` | `actor` | `target` | `source_id` | `value` |
+|---|---|---|---|---|
+| `chain` | 响应者 | 它回应的单位 | 响应被动 ID | 环节编号（2 起） |
+| `negate` | 无效者 | 被无效环节的发动者 | 被无效的技能或被动 ID | 被无效环节的编号 |
+| `fizzle` | 失效环节的发动者 | 0 | 失效的技能或被动 ID | 环节编号 |
 
 ## v1 的明确边界
 

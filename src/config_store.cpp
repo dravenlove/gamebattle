@@ -393,7 +393,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
     for (std::uint32_t index = 0; index < effect_count; ++index) {
         RawEffect raw;
         raw.id = reader.u32();
-        raw.value.kind = checked_enum<EffectKind>(reader.u8(), 4, "effect.kind");
+        raw.value.kind = checked_enum<EffectKind>(reader.u8(), 5, "effect.kind");
         raw.value.target = checked_enum<TargetRule>(reader.u8(), 6, "effect.target");
         raw.value.target_count = reader.i32();
         raw.value.attack_bp = reader.i32();
@@ -429,7 +429,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
         RawPassive raw;
         raw.id = reader.u32();
         raw.name = reader.string();
-        raw.trigger = checked_enum<Trigger>(reader.u8(), 8, "passive.trigger");
+        raw.trigger = checked_enum<Trigger>(reader.u8(), 10, "passive.trigger");
         raw.chance_bp = reader.i32();
         raw.max_triggers_per_round = reader.i32();
         raw.effect_ids = read_ids(reader);
@@ -459,6 +459,33 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
             if (!raw_effect_indexes.contains(effect_id)) {
                 throw std::runtime_error("buff reaction references an unknown effect");
             }
+        }
+    }
+
+    // Negate cancels a chain link, so it only makes sense in passives that
+    // answer one. Unknown ids are reported when skills/passives are linked.
+    const auto any_negate = [&](const std::vector<std::uint32_t>& effect_ids) {
+        return std::any_of(effect_ids.begin(), effect_ids.end(), [&](std::uint32_t id) {
+            const auto found = raw_effect_indexes.find(id);
+            return found != raw_effect_indexes.end() &&
+                   raw_effects[found->second].value.kind == EffectKind::negate;
+        });
+    };
+    for (const auto& raw : raw_reactions) {
+        if (is_response_trigger(raw.trigger) || any_negate(raw.effect_ids)) {
+            throw std::runtime_error(
+                "buff reactions cannot use response triggers or negate effects");
+        }
+    }
+    for (const auto& raw : raw_skills) {
+        if (any_negate(raw.effect_ids)) {
+            throw std::runtime_error("skills cannot contain negate effects");
+        }
+    }
+    for (const auto& raw : raw_passives) {
+        if (!is_response_trigger(raw.trigger) && any_negate(raw.effect_ids)) {
+            throw std::runtime_error(
+                "negate effects require an enemy_activate or ally_activate passive");
         }
     }
 

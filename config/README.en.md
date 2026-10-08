@@ -36,6 +36,8 @@ buffs -> buff_modifiers
 - `direct_damage` is direct damage that bypasses the hit, crit, defense, damage bonus and damage reduction formulas; damage over time can be built by having a reaction reference it.
 - `add_buff` effects must fill in `buff_id`.
 - `remove_buff` effects must fill in `remove_buff_id`.
+- `enemy_activate` and `ally_activate` are response triggers for passives only (see "Chains and responses" in the root README); they can't be used in `trigger` in `buff_reactions.csv` or in `decrement_on` in `buffs.csv`.
+- A `negate` effect cancels the chain link its response answered, and can only be referenced by passives whose `trigger` is `enemy_activate` or `ally_activate`; neither skills nor buff reactions may reference it. The `target` column has no effect on it; `trigger_unit` is fine.
 - For effects of other types, `buff_id`/`remove_buff_id` must be `0` or empty.
 - Blank numeric values use the compiler's defaults, but the columns themselves can't be deleted or renamed.
 - IDs must be unique within their own table; every cross-table reference is checked during generation.

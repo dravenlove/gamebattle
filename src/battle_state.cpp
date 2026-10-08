@@ -15,7 +15,13 @@ inline constexpr std::size_t kAttributeCount =
 
 bool valid_trigger(Trigger trigger) {
     return static_cast<std::uint8_t>(trigger) <=
-           static_cast<std::uint8_t>(Trigger::round_end);
+           static_cast<std::uint8_t>(Trigger::ally_activate);
+}
+
+bool contains_negate(const std::vector<Effect>& effects) {
+    return std::any_of(effects.begin(), effects.end(), [](const Effect& effect) {
+        return effect.kind == EffectKind::negate;
+    });
 }
 
 std::int64_t saturating_multiply(std::int64_t left, std::int64_t right) {
@@ -146,6 +152,7 @@ void validate_request(const BattleRequest& request) {
              (buff->lifetime.duration < 1 || buff->lifetime.duration > 10000)) ||
             (buff->lifetime.permanent && buff->lifetime.duration != 0) ||
             !valid_trigger(buff->lifetime.decrement_on) ||
+            is_response_trigger(buff->lifetime.decrement_on) ||
             buff->stacking.max_stacks < 1 ||
             buff->stacking.max_stacks > 1000 ||
             static_cast<std::uint8_t>(buff->stacking.mode) >
@@ -177,6 +184,11 @@ void validate_request(const BattleRequest& request) {
 
         validating_buffs.insert(buff);
         for (const auto& reaction : buff->reactions) {
+            if (is_response_trigger(reaction.trigger) ||
+                contains_negate(reaction.effects)) {
+                throw std::invalid_argument(
+                    "response triggers and negate effects are only valid in passives");
+            }
             if (!valid_trigger(reaction.trigger) ||
                 static_cast<std::uint8_t>(reaction.source) >
                     static_cast<std::uint8_t>(EffectSource::applier) ||
@@ -202,7 +214,7 @@ void validate_request(const BattleRequest& request) {
             effect.attack_bp < 0 || effect.attack_bp > 1'000'000 ||
             !valid_flat(effect.flat) ||
             static_cast<std::uint8_t>(effect.kind) >
-                static_cast<std::uint8_t>(EffectKind::direct_damage) ||
+                static_cast<std::uint8_t>(EffectKind::negate) ||
             static_cast<std::uint8_t>(effect.target) >
                 static_cast<std::uint8_t>(TargetRule::all_allies)) {
             throw std::invalid_argument(
@@ -267,6 +279,10 @@ void validate_request(const BattleRequest& request) {
                     throw std::invalid_argument(
                         "skill id, chance, or effect count is invalid");
                 }
+                if (contains_negate(skill.effects)) {
+                    throw std::invalid_argument(
+                        "negate effects are only valid in response passives");
+                }
                 for (const auto& effect : skill.effects) {
                     validate_effect(effect, 0);
                 }
@@ -278,9 +294,14 @@ void validate_request(const BattleRequest& request) {
                     !valid_probability(passive.chance_bp) ||
                     passive.max_triggers_per_round < 0 ||
                     passive.max_triggers_per_round > 10000 || passive.effects.empty() ||
-                    passive.effects.size() > 64) {
+                    passive.effects.size() > 64 || !valid_trigger(passive.trigger)) {
                     throw std::invalid_argument(
-                        "passive id, chance, trigger limit, or effect count is invalid");
+                        "passive id, trigger, chance, trigger limit, or effect count is invalid");
+                }
+                if (!is_response_trigger(passive.trigger) &&
+                    contains_negate(passive.effects)) {
+                    throw std::invalid_argument(
+                        "negate effects are only valid in response passives");
                 }
                 for (const auto& effect : passive.effects) {
                     validate_effect(effect, 0);
@@ -453,6 +474,22 @@ std::vector<std::size_t> BattleState::acting_order(Side side) {
             order.push_back(index);
         }
     }
+    sort_by_speed(order);
+    return order;
+}
+
+std::vector<std::size_t> BattleState::response_order(Side side) {
+    std::vector<std::size_t> order;
+    for (std::size_t index = 0; index < units.size(); ++index) {
+        if (units[index].side == side && units[index].alive()) {
+            order.push_back(index);
+        }
+    }
+    sort_by_speed(order);
+    return order;
+}
+
+void BattleState::sort_by_speed(std::vector<std::size_t>& order) {
     std::sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
         const auto left_speed = effective_stats(left).speed;
         const auto right_speed = effective_stats(right).speed;
@@ -464,7 +501,6 @@ std::vector<std::size_t> BattleState::acting_order(Side side) {
         }
         return units[left].config.id < units[right].config.id;
     });
-    return order;
 }
 
 std::optional<std::size_t> BattleState::find_unit(UnitId id) const {

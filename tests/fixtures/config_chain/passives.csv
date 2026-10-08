@@ -1,0 +1,3 @@
+id,name,trigger,chance_bp,max_triggers_per_round,effect_ids,notes
+711,counter_spell,enemy_activate,10000,1,9101,negate an enemy activation
+712,support,ally_activate,10000,1,9102,buff an ally before its skill resolves

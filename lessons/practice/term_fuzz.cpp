@@ -43,6 +43,37 @@ std::vector<std::vector<std::uint8_t>> seed_corpus() {
     using gamebattle::term::Value;
     std::vector<std::vector<std::uint8_t>> corpus;
     corpus.push_back(gamebattle::term::encode(practice::encode_request(practice::sample_battle(1, 42))));
+
+    // The same kind of battle with chain responses (enemy_activate -> negate,
+    // ally_activate -> counter damage), so mutations also reach the chain code.
+    auto chained = practice::sample_battle(2, 7);
+    gamebattle::Passive counter_spell;
+    counter_spell.id = 711;
+    counter_spell.name = "counter_spell";
+    counter_spell.trigger = gamebattle::Trigger::enemy_activate;
+    counter_spell.chance_bp = 5000;
+    gamebattle::Effect negate;
+    negate.kind = gamebattle::EffectKind::negate;
+    negate.target = gamebattle::TargetRule::trigger_unit;
+    negate.attack_bp = 0;
+    counter_spell.effects.push_back(negate);
+    gamebattle::Passive cover_fire;
+    cover_fire.id = 712;
+    cover_fire.name = "cover_fire";
+    cover_fire.trigger = gamebattle::Trigger::ally_activate;
+    cover_fire.chance_bp = 5000;
+    cover_fire.effects.push_back(gamebattle::Effect{
+        .kind = gamebattle::EffectKind::damage,
+        .target = gamebattle::TargetRule::enemy_lowest_hp,
+        .target_count = 1,
+        .attack_bp = 5000,
+        .buff = nullptr});
+    for (auto* formation : {&chained.attacker, &chained.defender}) {
+        formation->units.front().passives.push_back(counter_spell);
+        formation->units.back().passives.push_back(cover_fire);
+    }
+    corpus.push_back(gamebattle::term::encode(practice::encode_request(chained)));
+
     corpus.push_back(gamebattle::term::encode(Value::atom("ping")));
     corpus.push_back(gamebattle::term::encode(Value::tuple({Value::atom("load_config"), Value::binary("/nonexistent.gbcfg")})));
     corpus.push_back(gamebattle::term::encode(Value::list({Value(std::int64_t{1}), Value(std::int64_t{-5'000'000'000LL}), Value(1.5)})));
