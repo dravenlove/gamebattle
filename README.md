@@ -52,6 +52,7 @@
 - `erlang/src/gamebattle_port.erl`：受监督、串行化请求的 Port worker。
 - `erlang/src/gamebattle_nif.erl`：NIF 模块。
 - `erlang/src/gamebattle.erl`：统一 API 与完整示例输入。
+- `erlang/src/gamebattle_erl*.erl`：纯 Erlang 版战斗引擎，逐行对应 C++ 引擎，结果完全一致；与 NIF、Port 的性能对比见 `docs/engine-benchmark.md`。
 - `erlang/src/gamebattle_client.erl`：引擎结果与客户端 protobuf 消息之间的转换和请求校验。
 - `Dockerfile`、`compose.yaml`、`docker/`、`erlang/config/vm.args.src`：Docker 构建镜像与部署镜像，见“Docker 构建与部署”。
 
@@ -238,7 +239,13 @@ Request = gamebattle:example_request(),
 {ok, Result2} = gamebattle:simulate(nif, Request),
 
 true = (Result1 =:= Result2).
+
+%% 纯 Erlang 引擎：在调用进程里运行，结果与 C++ 完全一致
+{ok, Result3} = gamebattle:simulate(erlang, Request),
+true = (Result1 =:= Result3).
 ```
+
+三种方式的速度对比、差距来源和选型建议见 [docs/engine-benchmark.md](docs/engine-benchmark.md)。
 
 也可以通过应用配置指定 Port 路径与超时：
 
@@ -304,8 +311,9 @@ application:ensure_all_started(gamebattle),
 {ok, #{buffs := 2, effects := 5, skills := 1, passives := 3}} =
     gamebattle:load_config(port, "D:/server/config/battle.gbcfg").
 
-%% NIF 使用独立的进程内配置仓库，需要单独加载：
-{ok, _} = gamebattle:load_config(nif, "D:/server/config/battle.gbcfg").
+%% NIF 和纯 Erlang 引擎各有一份配置，用到哪个就分别加载：
+{ok, _} = gamebattle:load_config(nif, "D:/server/config/battle.gbcfg"),
+{ok, _} = gamebattle:load_config(erlang, "D:/server/config/battle.gbcfg").
 ```
 
 加载成功后，单位可以只传配置 ID，不再把完整技能结构重复发送给 C++：

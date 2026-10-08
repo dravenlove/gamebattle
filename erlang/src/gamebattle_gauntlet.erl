@@ -2,7 +2,7 @@
 
 -export([run/3, run/4]).
 
--type adapter() :: port | nif.
+-type adapter() :: port | nif | erlang.
 -type wave() :: #{
     battle_id := non_neg_integer(),
     seed := non_neg_integer(),
@@ -19,7 +19,7 @@ run(Adapter, AttackerFormation, Waves) ->
 
 -spec run(adapter(), map(), [wave()], map()) -> result().
 run(Adapter, AttackerFormation, Waves, Options)
-        when (Adapter =:= port orelse Adapter =:= nif),
+        when (Adapter =:= port orelse Adapter =:= nif orelse Adapter =:= erlang),
              is_map(AttackerFormation), is_list(Waves), is_map(Options) ->
     case validate_waves(Waves, 1, #{}) of
         ok ->

@@ -52,6 +52,7 @@ The same `seed` and the same input produce exactly the same result and event log
 - `erlang/src/gamebattle_port.erl`: a supervised Port worker that serializes requests.
 - `erlang/src/gamebattle_nif.erl`: the NIF module.
 - `erlang/src/gamebattle.erl`: the unified API and a complete sample input.
+- `erlang/src/gamebattle_erl*.erl`: the battle engine in plain Erlang, a line-by-line port of the C++ engine with identical results; see `docs/engine-benchmark.en.md` for how it compares with the NIF and the Port.
 - `erlang/src/gamebattle_client.erl`: converts engine results to client protobuf messages and validates client requests.
 - `Dockerfile`, `compose.yaml`, `docker/`, `erlang/config/vm.args.src`: the Docker build and deploy images; see "Docker build and deployment".
 
@@ -238,7 +239,13 @@ Request = gamebattle:example_request(),
 {ok, Result2} = gamebattle:simulate(nif, Request),
 
 true = (Result1 =:= Result2).
+
+%% The engine in plain Erlang: runs in the calling process, same results as C++
+{ok, Result3} = gamebattle:simulate(erlang, Request),
+true = (Result1 =:= Result3).
 ```
+
+See [docs/engine-benchmark.en.md](docs/engine-benchmark.en.md) for how fast the three are, where the differences come from, and which to choose.
 
 The Port path and timeout can also be set through application config:
 
@@ -304,8 +311,9 @@ application:ensure_all_started(gamebattle),
 {ok, #{buffs := 2, effects := 5, skills := 1, passives := 3}} =
     gamebattle:load_config(port, "D:/server/config/battle.gbcfg").
 
-%% The NIF uses its own in-process config store and must be loaded separately:
-{ok, _} = gamebattle:load_config(nif, "D:/server/config/battle.gbcfg").
+%% The NIF and the plain-Erlang engine each keep their own copy; load the ones you use:
+{ok, _} = gamebattle:load_config(nif, "D:/server/config/battle.gbcfg"),
+{ok, _} = gamebattle:load_config(erlang, "D:/server/config/battle.gbcfg").
 ```
 
 Once loaded, units can send just config IDs instead of repeatedly sending full skill structures to C++:
