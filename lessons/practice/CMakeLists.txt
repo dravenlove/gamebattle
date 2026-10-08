@@ -32,3 +32,8 @@ practice_program(term_fuzz term_fuzz.cpp)
 if(NOT WIN32)
     practice_program(battle_tcp_server battle_tcp_server.cpp)
 endif()
+
+# Lesson 20: standalone game-server data structures (no engine dependency).
+foreach(demo rank_test timers aoi consistent_hash aos_soa)
+    add_executable(ds_${demo} ds/${demo}.cpp)
+endforeach()
