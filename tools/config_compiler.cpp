@@ -1,3 +1,6 @@
+#include "gamebattle/config_check.hpp"
+#include "gamebattle/config_store.hpp"
+
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -964,7 +967,21 @@ struct Arguments {
     fs::path output;
     bool check_only{false};
     bool help{false};
+    gamebattle::config_check::Options cascades;
 };
+
+std::int32_t option_number(const std::string& option, const fs::path& value,
+                           std::int32_t minimum, std::int32_t maximum) {
+    const auto text = value.generic_string();
+    std::int32_t number = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
+    if (error != std::errc{} || end != text.data() + text.size() || number < minimum ||
+        number > maximum) {
+        throw ConfigError(option + " must be a number between " + std::to_string(minimum) +
+                          " and " + std::to_string(maximum));
+    }
+    return number;
+}
 
 Arguments parse_arguments(std::span<const fs::path> args) {
     Arguments result;
@@ -974,6 +991,17 @@ Arguments parse_arguments(std::span<const fs::path> args) {
             result.help = true;
         } else if (option == "--check-only") {
             result.check_only = true;
+        } else if (option == "--no-stress") {
+            result.cascades.stress = false;
+        } else if (option == "--stress-rounds" || option == "--stress-units") {
+            if (index + 1 >= args.size()) {
+                throw ConfigError(option + " requires a value");
+            }
+            if (option == "--stress-rounds") {
+                result.cascades.rounds = option_number(option, args[++index], 1, 100);
+            } else {
+                result.cascades.units_per_side = option_number(option, args[++index], 1, 256);
+            }
         } else if (option == "--input-dir" || option == "--output") {
             if (index + 1 >= args.size()) {
                 throw ConfigError(option + " requires a value");
@@ -999,15 +1027,27 @@ int run(std::span<const fs::path> args) {
         if (options.help) {
             std::cout
                 << "Usage: gamebattle_config_compiler --input-dir DIR "
-                   "[--output FILE | --check-only]\n";
+                   "[--output FILE | --check-only]\n"
+                   "       [--no-stress] [--stress-rounds N] [--stress-units N]\n"
+                   "After validating the tables it checks for passives and buff reactions\n"
+                   "that set each other off without end, and runs stress battles; a pack\n"
+                   "with such a loop is not written.\n";
             return 0;
         }
         const auto tables = parse_tables(options.input_directory);
+        const auto pack = build_pack(tables);
+        // Load the pack exactly as the servers will, then look for cascades.
+        const auto store = gamebattle::ConfigStore::load_bytes(pack);
+        const auto report = gamebattle::config_check::check(
+            gamebattle::config_check::definitions(store), options.cascades);
+        std::cout << gamebattle::config_check::format(report);
+        if (report.has_errors()) {
+            throw ConfigError("the cascade check found runaway loops; no pack was written");
+        }
         if (options.check_only) {
             std::cout << "configuration is valid\n";
             return 0;
         }
-        const auto pack = build_pack(tables);
         const auto output = fs::absolute(options.output);
         write_pack(output, pack);
         std::cout << "wrote " << path_text(output) << " (" << pack.size()

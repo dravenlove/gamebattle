@@ -1,0 +1,4 @@
+id,name,trigger,chance_bp,max_triggers_per_round,effect_ids,notes
+801,反击,on_damaged,10000,0,9003,受击必反击，没有每回合上限：死循环
+802,荆棘护体,battle_start,10000,0,9002,开场获得荆棘
+803,有限反击,on_damaged,5000,1,9003,每回合最多一次

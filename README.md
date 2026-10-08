@@ -38,6 +38,7 @@
 - `include/gamebattle/engine.hpp`：稳定的 C++ 战斗领域模型。
 - `include/gamebattle/config_store.hpp`：只读、可并发共享的配置内存仓库。
 - `tools/config_compiler.cpp`：C++20 CSV 校验与 `.gbcfg` 二进制配置编译器。
+- `src/config_check.cpp`：编译器对每个配置包做的死循环检查：被动与 Buff reaction 的触发关系图，加上压力战斗。
 - `config/example`：技能、效果、Buff、被动的策划表示例。
 - `docs/buff-v2-design.md`：通用 Modifier、Reaction、生命周期和叠层策略设计。
 - `proto/battle_client.proto`：游戏客户端协议（protobuf），说明见 `docs/client-protocol.md`。
@@ -285,7 +286,7 @@ passives.csv ──────→ effects.csv
 
 通用 Buff 不再按属性或周期效果扩展固定字段。Buff 定义只组合生命周期策略、叠层策略、通用属性修改器和事件 Reaction；详细语义见 `docs/buff-v2-design.md`。
 
-表字段、枚举和填写规则见 `config/README.md`。先校验配置：
+表字段、枚举和填写规则见 `config/README.md`。编译器除了校验表格，还会检查有没有被动和 Buff reaction 会无休止地互相触发（例如没有 `max_triggers_per_round` 的反击被动互相反击），并跑压力战斗；发现这样的死循环就拒绝生成配置包，见[死循环检查](config/README.md#死循环检查)。先校验配置：
 
 ```powershell
 .\erlang\bin\gamebattle_config_compiler.exe `

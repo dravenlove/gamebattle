@@ -272,11 +272,18 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
     if (!input.eof() && input.fail()) {
         throw std::runtime_error("failed while reading gamebattle config pack");
     }
+    return load_bytes(bytes);
+}
+
+ConfigStore ConfigStore::load_bytes(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() > kMaxPackBytes) {
+        throw std::runtime_error("gamebattle config pack exceeds the 64 MiB limit");
+    }
     if (bytes.size() < kHeaderBytes) {
         throw std::runtime_error("gamebattle config pack is smaller than its header");
     }
 
-    Reader header(std::span<const std::uint8_t>(bytes).first(kHeaderBytes));
+    Reader header(bytes.first(kHeaderBytes));
     if (header.u8() != 'G' || header.u8() != 'B' || header.u8() != 'C' ||
         header.u8() != 'F') {
         throw std::runtime_error("invalid gamebattle config magic");
@@ -293,7 +300,7 @@ ConfigStore ConfigStore::load_file(const std::filesystem::path& path) {
     if (payload_size != bytes.size() - kHeaderBytes) {
         throw std::runtime_error("gamebattle config payload length does not match its header");
     }
-    const auto payload = std::span<const std::uint8_t>(bytes).subspan(kHeaderBytes);
+    const auto payload = bytes.subspan(kHeaderBytes);
     if (crc32(payload) != expected_crc) {
         throw std::runtime_error("gamebattle config CRC32 check failed");
     }
@@ -637,6 +644,25 @@ const Skill& ConfigStore::require_skill(std::uint32_t id) const {
 const Passive& ConfigStore::require_passive(std::uint32_t id) const {
     return require_item(passives_, id, "passive");
 }
+
+namespace {
+
+template <typename T>
+std::vector<std::uint32_t> sorted_ids(const std::unordered_map<std::uint32_t, T>& values) {
+    std::vector<std::uint32_t> ids;
+    ids.reserve(values.size());
+    for (const auto& entry : values) {
+        ids.push_back(entry.first);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+} // namespace
+
+std::vector<std::uint32_t> ConfigStore::buff_ids() const { return sorted_ids(buffs_); }
+std::vector<std::uint32_t> ConfigStore::skill_ids() const { return sorted_ids(skills_); }
+std::vector<std::uint32_t> ConfigStore::passive_ids() const { return sorted_ids(passives_); }
 
 void ConfigStore::assign_loadout(UnitConfig& unit,
                                  std::span<const std::uint32_t> skill_ids,

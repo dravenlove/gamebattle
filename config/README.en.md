@@ -42,6 +42,41 @@ buffs -> buff_modifiers
 - Blank numeric values use the compiler's defaults, but the columns themselves can't be deleted or renamed.
 - IDs must be unique within their own table; every cross-table reference is checked during generation.
 
+## Runaway loop check
+
+Every run of the compiler, `--check-only` included, also looks for passives and buff reactions that set each other off without end, and refuses to write a pack that has one.
+
+Damage sets off `on_hit` for the attacker, `on_damaged` for the target and `unit_death` on a kill. A passive on `on_damaged` that deals damage therefore sets off `on_damaged` on its own target; if that unit has the same passive, it answers, and so on. With no `max_triggers_per_round`, nothing stops this until the engine cuts the cascade at its trigger depth limit or ends the battle at `max_events` (end reason `event_limit`). With area damage every link sets off several more, and a single action can turn into hundreds of thousands of events.
+
+The check has two parts:
+
+1. **Loops**: passives and buff reactions are linked when the damage of one sets off the trigger of the other. The check assumes any unit may carry any passive, so it also catches loops between different heroes.
+   - `error`: a loop in which nothing has a `max_triggers_per_round`. No pack is written. The message shows the loop and asks for a limit on at least one passive or reaction in it.
+   - `note`: a loop that limits end. It lists the passives involved and how often each unit can fire them a round.
+   - These never loop: `unit_death` (a unit dies once), the response triggers, triggers only the battle itself sets off (`battle_start`, `round_start`, `before_action`, `on_attack`, `after_action`, `round_end`), healing and adding or removing buffs (they set off nothing), and anything with a `chance_bp` of 0.
+2. **Stress battles**: 3 battles of 7v7 in which every unit carries every passive (in groups of 128 if there are more, the most one unit may have) and the first 128 skills, nobody dies, 5 rounds, at most 200,000 events. It reports the largest step, one unit's action or one run of triggers, and the passives that fired most in it.
+   - `error`: a battle ran out of events, and the loop check found a loop.
+   - `warning`: a battle ran out of events though every loop is limited, or a single step had more than 5,000 events. The limits are probably too high.
+   - `note`: the size of the battles and their largest step.
+
+`--stress-rounds N` and `--stress-units N` change the stress battles; `--no-stress` skips them. The loop check always runs.
+
+For example, a counterattack with no limit and a thorns buff that reflects damage:
+
+```text
+error: runaway loop: nothing in it has a max_triggers_per_round, so the triggers keep setting each other off until the engine cuts the cascade at its trigger depth limit, or ends the battle at max_events:
+    passive 801 "反击" (on_damaged, no limit) deals damage, which sets off on_damaged
+    -> passive 801 "反击" (on_damaged, no limit) again
+  All of these can set one another off: passive 801 "反击", buff 901 "荆棘" reaction 1.
+  Give at least one of them a max_triggers_per_round.
+error: stress battle (7v7, every unit with all 3 passives and 1 skill, nobody dies, 5 rounds) ran out of events: it reached max_events (200,000) in round 1. Largest step: 199,971 events in round 1, during unit 2007's action; most set off: passive 801 x49,996, buff 901 reactions x49,986, passive 803 x2.
+config error: the cascade check found runaway loops; no pack was written
+```
+
+Giving passive 801 and the thorns reaction a `max_triggers_per_round` of 1 fixes it. The tables in [`tests/fixtures/config_runaway_loop`](../tests/fixtures/config_runaway_loop) reproduce this output.
+
+## Building the pack
+
 Validate without generating:
 
 ```powershell
@@ -63,5 +98,5 @@ Generate the binary config package:
 A `.gbcfg` is a deterministic little-endian binary package containing the magic number `GBCF`, major/minor version, payload length and CRC32. The current format version is `2.0`.
 The payload first writes six record counts, for buffs, modifiers, reactions, effects, skills and passives, then the six kinds of records in turn; modifier and reaction records both carry their owning `buff_id` and `sequence`.
 The same CSV files always produce exactly the same file, making it easy for a release system to compare hashes and roll back safely.
-The config compiler itself uses C++20 and is maintained in the same CMake project as the battle engine, but is compiled through a separate target and build directory, and needs neither Python nor any Excel runtime.
+The config compiler itself uses C++20 and is maintained in the same CMake project as the battle engine, but is compiled through a separate target and build directory, and needs neither Python nor any Excel runtime. It links the battle core to run the stress battles.
 It's off by default; a normal battle core build doesn't compile the config tool.

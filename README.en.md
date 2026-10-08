@@ -38,6 +38,7 @@ The same `seed` and the same input produce exactly the same result and event log
 - `include/gamebattle/engine.hpp`: the stable C++ battle domain model.
 - `include/gamebattle/config_store.hpp`: a read-only in-memory config store that can be shared concurrently.
 - `tools/config_compiler.cpp`: a C++20 CSV validator and `.gbcfg` binary config compiler.
+- `src/config_check.cpp`: the runaway loop check the compiler runs on every pack: a trigger graph of passives and buff reactions, plus stress battles.
 - `config/example`: sample designer tables for skills, effects, buffs and passives.
 - `docs/buff-v2-design.md`: the design of generic modifiers, reactions, lifetimes and stacking policies.
 - `proto/battle_client.proto`: the game-client protocol (protobuf); see `docs/client-protocol.en.md`.
@@ -285,7 +286,7 @@ passives.csv ──────→ effects.csv
 
 Generic buffs no longer add fixed fields per attribute or periodic effect. A buff definition only combines a lifetime policy, a stacking policy, generic attribute modifiers and event reactions; see `docs/buff-v2-design.md` for the detailed semantics.
 
-Table fields, enums and filling rules are in `config/README.md`. Validate the config first:
+Table fields, enums and filling rules are in `config/README.en.md`. Besides validating the tables, the compiler looks for passives and buff reactions that set each other off without end (a counterattack answering a counterattack with no `max_triggers_per_round`), runs stress battles, and refuses to write a pack with such a loop; see [Runaway loop check](config/README.en.md#runaway-loop-check). Validate the config first:
 
 ```powershell
 .\erlang\bin\gamebattle_config_compiler.exe `

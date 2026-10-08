@@ -10,18 +10,9 @@ option(GAMEBATTLE_BUILD_TESTS "Build the C++ battle-core tests" ON)
 option(GAMEBATTLE_BUILD_NIF "Build the Erlang NIF adapter" OFF)
 option(GAMEBATTLE_BUILD_CONFIG_COMPILER "Build the standalone battle config compiler" OFF)
 
-if(GAMEBATTLE_BUILD_CONFIG_COMPILER)
-    add_executable(gamebattle_config_compiler tools/config_compiler.cpp)
-    target_compile_features(gamebattle_config_compiler PRIVATE cxx_std_20)
-    if(MSVC)
-        target_compile_options(gamebattle_config_compiler PRIVATE /W4 /permissive- /utf-8)
-    else()
-        target_compile_options(gamebattle_config_compiler PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
-endif()
-
 add_library(gamebattle_core STATIC
     src/battle_state.cpp
+    src/config_check.cpp
     src/config_store.cpp
     src/effect_system.cpp
     src/engine.cpp
@@ -37,6 +28,18 @@ if(MSVC)
     target_compile_options(gamebattle_core PRIVATE /W4 /permissive- /utf-8)
 else()
     target_compile_options(gamebattle_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(GAMEBATTLE_BUILD_CONFIG_COMPILER)
+    add_executable(gamebattle_config_compiler tools/config_compiler.cpp)
+    # The engine runs the cascade check's stress battles.
+    target_link_libraries(gamebattle_config_compiler PRIVATE gamebattle_core)
+    target_compile_features(gamebattle_config_compiler PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(gamebattle_config_compiler PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(gamebattle_config_compiler PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 endif()
 
 add_executable(gamebattle_port src/port_main.cpp)
@@ -57,6 +60,9 @@ if(GAMEBATTLE_BUILD_TESTS)
     add_executable(gamebattle_tests tests/engine_test.cpp)
     target_link_libraries(gamebattle_tests PRIVATE gamebattle_core)
     add_test(NAME gamebattle_tests COMMAND gamebattle_tests)
+    add_executable(gamebattle_config_check_tests tests/config_check_test.cpp)
+    target_link_libraries(gamebattle_config_check_tests PRIVATE gamebattle_core)
+    add_test(NAME gamebattle_config_check_tests COMMAND gamebattle_config_check_tests)
 
     if(GAMEBATTLE_BUILD_CONFIG_COMPILER)
         set(GAMEBATTLE_TEST_CONFIG_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated-config)
@@ -144,6 +150,21 @@ if(GAMEBATTLE_BUILD_TESTS)
         set_tests_properties(gamebattle_config_compiler_invalid_response_reaction
             PROPERTIES PASS_REGULAR_EXPRESSION
                 "buff_reactions.csv:2: buff reactions cannot use a response trigger")
+        # A counterattack and a thorns buff that answer each other without a
+        # per-round limit: refused, and the message names the loop.
+        add_test(NAME gamebattle_config_compiler_runaway_loop
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_runaway_loop
+                --check-only)
+        set_tests_properties(gamebattle_config_compiler_runaway_loop
+            PROPERTIES WILL_FAIL TRUE)
+        add_test(NAME gamebattle_config_compiler_runaway_loop_message
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_runaway_loop
+                --check-only --no-stress)
+        set_tests_properties(gamebattle_config_compiler_runaway_loop_message
+            PROPERTIES PASS_REGULAR_EXPRESSION
+                "passive 801 \"[^\"]*\" \\(on_damaged, no limit\\) deals damage, which sets off on_damaged")
     endif()
 endif()
 
