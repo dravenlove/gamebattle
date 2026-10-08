@@ -326,7 +326,7 @@ gdb --args out/build/linux-runtime-debug/gamebattle_tests
 - **在 Linux 上构建 Linux 的产物**。Windows 编出来的 `.exe` / `.dll` 不能部署到 Linux。
 - **glibc 版本**：在旧版本系统上编译的程序，通常能在新版本上运行，反过来不行。所以构建机的发行版版本应该**不高于**生产机，最好完全一致（比如用相同的容器镜像）。
 - **NIF** 必须用与生产环境**同一个 OTP 主版本**的 `erl_nif.h` 编译。
-- Erlang 侧按 `application:get_env(gamebattle, port_executable)` → 环境变量 `GAMEBATTLE_PORT` → `priv/` 目录的顺序查找 Port 可执行文件（`gamebattle_port.erl:103`）。
+- Erlang 侧按 `application:get_env(gamebattle, port_executable)` → 环境变量 `GAMEBATTLE_PORT` → `priv/` 目录的顺序查找 Port 可执行文件（`gamebattle_port.erl:160`）。
 
 ## 9. 课程回顾：以后扩展时，哪些课的警告会用上
 

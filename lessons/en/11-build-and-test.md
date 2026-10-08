@@ -326,7 +326,7 @@ If a problem can't be reproduced in Debug and only appears in Release, suspect *
 - **Build Linux artifacts on Linux.** A `.exe` / `.dll` built on Windows can't be deployed to Linux.
 - **glibc versions**: a program built on an older system usually runs on a newer one, but not the other way round. So the build machine's distribution version should be **no newer** than production's, ideally identical (for example, the same container image).
 - **The NIF** must be compiled against an `erl_nif.h` from **the same OTP major version** as production.
-- The Erlang side looks for the Port executable in the order `application:get_env(gamebattle, port_executable)` → the environment variable `GAMEBATTLE_PORT` → the `priv/` directory (`gamebattle_port.erl:103`).
+- The Erlang side looks for the Port executable in the order `application:get_env(gamebattle, port_executable)` → the environment variable `GAMEBATTLE_PORT` → the `priv/` directory (`gamebattle_port.erl:160`).
 
 ## 9. Course recap: which lessons' warnings apply when you extend the engine
 

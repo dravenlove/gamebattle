@@ -36,21 +36,35 @@ init(Options) ->
     ...
     Port = open_port({spawn_executable, filename:absname(Executable)},
                      [binary, {packet, 4}, use_stdio, exit_status]),
-    {ok, #state{port = Port, executable = Executable, timeout = Timeout}}.
+    case load_startup_config(Port, Timeout) of
+        ok -> {ok, #state{port = Port, executable = Executable, timeout = Timeout}};
+        {error, Reason} -> close_port_safely(Port), {stop, Reason}
+    end.
 
 handle_call({request, Request}, _From, State = #state{port = Port, timeout = Timeout}) ->
+    case exchange(Port, Request, Timeout) of
+        {reply, Response} ->
+            remember_config(Request, Response),
+            {reply, Response, State};
+        {port_exit, Reason, Error} ->
+            {stop, {port_exit, Reason}, {error, Error}, State};
+        timeout ->
+            {stop, port_timeout, {error, #{type => timeout, timeout_ms => Timeout}}, State}
+    end;
+
+exchange(Port, Request, Timeout) ->
     true = port_command(Port, term_to_binary(Request)),
     receive
         {Port, {data, ResponseBinary}} ->
-            {reply, decode_response(ResponseBinary), State};
+            {reply, decode_response(ResponseBinary)};
         {Port, {exit_status, Status}} ->
-            {stop, {port_exit, Status}, {error, #{type => port_exit, status => Status}}, State};
+            {port_exit, Status, #{type => port_exit, status => Status}};
         {'EXIT', Port, Reason} ->
-            {stop, {port_exit, Reason}, {error, #{type => port_exit, reason => Reason}}, State}
+            {port_exit, Reason, #{type => port_exit, reason => Reason}}
     after Timeout ->
         close_port_safely(Port),
-        {stop, port_timeout, {error, #{type => timeout, timeout_ms => Timeout}}, State}
-    end;
+        timeout
+    end.
 ```
 
 You should know this well. The key design points:
@@ -59,8 +73,9 @@ You should know this well. The key design points:
 |---|---|
 | `{packet, 4}` | Every message is prefixed with a 4-byte big-endian length header; C++ must read and write the same format |
 | `exit_status` | When the C++ process exits, Erlang receives `{Port, {exit_status, N}}`, where N is `main`'s return value |
-| A synchronous `receive` inside `handle_call` | **One worker handles only one battle at a time.** This is deliberate backpressure so that several requests don't compete for the same Port's responses |
+| `handle_call` waits for the reply synchronously (`exchange/3`) | **One worker handles only one battle at a time.** This is deliberate backpressure so that several requests don't compete for the same Port's responses |
 | `after Timeout` | When the C++ side loops forever or hangs, close the Port and `stop`; the supervisor restarts a brand-new C++ process |
+| `load_startup_config` in `init` | A freshly started C++ process has no config. When `config_path` (or the `GAMEBATTLE_CONFIG` environment variable) is set, it is loaded before any request is served; a successful `load_config/1` records the new path (`remember_config`), so a restarted Port gets the most recently loaded config |
 | `gamebattle_sup`: `one_for_one`, at most 5 restarts in 10 seconds | Occasional crashes recover automatically; frequent crashes are escalated |
 
 When you need concurrency, the README recommends starting several workers and sharding by `battle_id`, rather than letting one worker handle several requests at once.
@@ -512,11 +527,16 @@ The Erlang side:
 -on_load(init/0).
 
 init() ->
-    erlang:load_nif(filename:join(resolve_priv_dir(), "gamebattle_nif"), 0).
+    case erlang:load_nif(filename:join(resolve_priv_dir(), "gamebattle_nif"), 0) of
+        ok -> ok;
+        {error, Reason} -> persistent_term:put(?LOAD_ERROR, Reason)
+    end.
 
-simulate(_Request) ->
-    erlang:nif_error(nif_not_loaded).      % replaced by the C++ implementation once loaded
+simulate(_Request) ->                      % replaced by the C++ implementation once loaded
+    erlang:nif_error({nif_not_loaded, persistent_term:get(?LOAD_ERROR, undefined)}).
 ```
+
+`init` returns `ok` even when loading fails. An `on_load` that returns an error makes the module fail to load, and a release loads every module at boot, so a node built with only the Port and no NIF library would not start at all. The reason is kept in `persistent_term` and raised when the NIF is actually called.
 
 ### ① ④ Why the NIF still takes a detour through ETF
 
