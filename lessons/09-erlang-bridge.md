@@ -1,5 +1,7 @@
 # 第 9 课：对接 Erlang
 
+**中文** | [English](en/09-erlang-bridge.md)
+
 > 对应文件：
 > - Erlang 侧：`erlang/src/gamebattle_port.erl`、`gamebattle_nif.erl`、`gamebattle_sup.erl`、`gamebattle.erl`
 > - C++ 侧：`src/port_main.cpp`、`src/nif.cpp`、`src/term.cpp`（ETF 编解码）、`src/wire.cpp`（ETF ↔ 战斗结构）

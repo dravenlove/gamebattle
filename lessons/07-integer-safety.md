@@ -1,5 +1,7 @@
 # 第 7 课：整数安全
 
+**中文** | [English](en/07-integer-safety.md)
+
 > 对应文件：`src/battle_state.cpp:21-43`（`saturating_multiply`）、`:321-336`（`saturating_add`、`scale`）
 
 这三个小函数只有几十行，却是整个伤害计算的地基。

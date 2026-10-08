@@ -1,5 +1,7 @@
 # 第 22 课：线上问题排查与模糊测试
 
+**中文** | [English](en/22-debugging-and-fuzzing.md)
+
 > 实战代码：`practice/term_fuzz.cpp`、`practice/known_issues.cpp`。
 >
 > 面试官很喜欢问"线上出过什么问题、你怎么查的"。这一课先讲 C++ 服务端常见问题的排查手段（每一种都实际演示过），再讲模糊测试，最后完整记录我在这个项目里发现的两个真实问题。

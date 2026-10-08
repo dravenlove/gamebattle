@@ -1,5 +1,7 @@
 # 第 2 课：值、引用、指针、const、std::move
 
+**中文** | [English](en/02-ownership.md)
+
 > 对应文件：`src/battle_runtime.hpp`、`src/battle_state.cpp`
 > 练习代码：`lessons/lesson2.cpp`（可选）
 

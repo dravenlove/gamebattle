@@ -1,5 +1,7 @@
 # 第 15 课：模板、Concepts 与编译期计算
 
+**中文** | [English](en/15-templates.md)
+
 > 第 9、10 课已经见过 `checked_int<T>` 和 `checked_enum<Enum>` 这两个函数模板。这一课讲模板的工作方式、C++20 的 concepts，以及"让编译器替你提前算好"的编译期计算。
 
 ## 1. 模板是"生成代码的配方"

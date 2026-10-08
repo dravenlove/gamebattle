@@ -1,5 +1,7 @@
 # gamebattle
 
+**中文** | [English](README.en.md)
+
 这是一个可由 Erlang 调用的 C++20 回合制战斗框架。当前版本同时提供：
 
 - `open_port`：默认推荐的生产入口。C++ 崩溃只会带走 Port 进程，Erlang 监督树可以重启它。

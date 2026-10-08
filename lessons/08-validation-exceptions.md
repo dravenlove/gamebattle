@@ -1,5 +1,7 @@
 # 第 8 课：校验与异常
 
+**中文** | [English](en/08-validation-exceptions.md)
+
 > 对应文件：`src/battle_state.cpp:97-313`（`validate_request`，**抛出**）、`src/wire.cpp:608-658`（`handle_etf`，**捕获**）
 
 ## 1. 全局：错误是怎么一路传回 Erlang 的

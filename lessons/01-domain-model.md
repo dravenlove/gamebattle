@@ -1,5 +1,7 @@
 # 第 1 课：用 Erlang 的眼光读领域模型
 
+**中文** | [English](en/01-domain-model.md)
+
 > 对应文件：`include/gamebattle/engine.hpp`
 > 练习代码：`lessons/lesson1.cpp`（可选）
 

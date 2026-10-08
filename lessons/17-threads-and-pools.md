@@ -1,5 +1,7 @@
 # 第 17 课：线程、锁与线程池
 
+**中文** | [English](en/17-threads-and-pools.md)
+
 > 第三部分「并发」的第一课。实战代码：`practice/thread_pool.hpp`、`practice/battle_thread_pool.cpp`。
 >
 > 你在 Erlang 里写了多年的并发，但 Erlang 的并发和 C++ 完全是两种模型。这一课先讲清楚差别，再用一个线程池并发跑真实的战斗。

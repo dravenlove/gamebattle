@@ -1,5 +1,7 @@
 # 第 21 课：性能分析与优化
 
+**中文** | [English](en/21-performance.md)
+
 > 第五部分「性能与线上」的第一课。实战代码：`practice/battle_bench.cpp`、`practice/encode_bench.cpp`、`practice/direct_encode.hpp`。
 >
 > 这一课完整记录了我在本项目上做的一次真实的性能分析：从测量、定位、找到原因，到做实验验证修复方案。整个过程本身就是面试时可以讲的项目经历（第 24 课）。

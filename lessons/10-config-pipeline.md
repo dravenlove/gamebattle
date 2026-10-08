@@ -1,5 +1,7 @@
 # 第 10 课：配置管线
 
+**中文** | [English](en/10-config-pipeline.md)
+
 > 对应文件：
 > - 策划表：`config/example/*.csv`、`config/README.md`
 > - 编译器：`tools/config_compiler.cpp`（CSV → `.gbcfg`）

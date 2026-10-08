@@ -1,5 +1,7 @@
 # 战斗配置表
 
+**中文** | [English](README.en.md)
+
 策划维护以下六张 UTF-8 CSV：
 
 - `buffs.csv`：Buff 身份、生命周期和叠层策略。

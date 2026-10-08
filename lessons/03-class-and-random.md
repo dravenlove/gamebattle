@@ -1,5 +1,7 @@
 # 第 3 课：类与确定性随机数
 
+**中文** | [English](en/03-class-and-random.md)
+
 > 对应文件：`src/battle_runtime.hpp:24-32`（`Random`）、`src/battle_state.cpp:338-368`
 
 ## 1. class 和 struct：只差一个默认值

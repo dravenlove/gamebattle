@@ -1,5 +1,7 @@
 # 第 11 课：构建、测试与调试
 
+**中文** | [English](en/11-build-and-test.md)
+
 > 对应文件：`CMakeLists.txt`、`CMakePresets.json`、`scripts/*.ps1`、`tests/*.cpp`
 
 本课的构建和测试结果，都是在 Linux（g++ 13.3、CMake）上实际跑出来的。

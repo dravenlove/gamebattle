@@ -1,5 +1,7 @@
 # 第 5 课：选目标
 
+**中文** | [English](en/05-target-selector.md)
+
 > 对应文件：`src/target_selector.cpp`（83 行）
 
 这个文件只做一件事：**给定规则，返回一组目标的下标**。它不扣血也不加 Buff，只负责"选谁"。这一课把 lambda 和 `std::sort` 讲透，它们在整个项目里到处都是。
