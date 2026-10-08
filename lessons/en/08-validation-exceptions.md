@@ -2,7 +2,7 @@
 
 [中文](../08-validation-exceptions.md) | **English**
 
-> Files: `src/battle_state.cpp:97-313` (`validate_request`, **throws**), `src/wire.cpp:608-658` (`handle_etf`, **catches**)
+> Files: `src/battle_state.cpp:103-334` (`validate_request`, **throws**), `src/wire.cpp:611-661` (`handle_etf`, **catches**)
 
 ## 1. The big picture: how an error travels all the way back to Erlang
 
@@ -134,7 +134,7 @@ Why not just use `runtime_error`? So it **can be told apart in a catch**: `Decod
 
 ## 7. Exception translation: catch, add context, rethrow
 
-`wire.cpp:432-444`:
+`wire.cpp:435-447`:
 
 ```cpp
 try {
@@ -199,7 +199,7 @@ auto depth_of = [&](std::size_t n) { return n == 0 ? 0 : 1 + depth_of(n - 1); };
 // error: use of 'depth_of' before deduction of 'auto'
 ```
 
-The compiler has to **see the whole lambda** to deduce the type of `depth_of`, but the body already needs it. The project's solution (`battle_state.cpp:123-127`):
+The compiler has to **see the whole lambda** to deduce the type of `depth_of`, but the body already needs it. The project's solution (`battle_state.cpp:129-133`):
 
 ```cpp
 std::function<void(const Effect&, std::size_t)> validate_effect;                       // ① declare first, type spelled out

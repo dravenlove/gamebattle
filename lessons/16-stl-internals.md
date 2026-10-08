@@ -33,7 +33,7 @@ reserve(1000) 后 push_back 1000 次，capacity=1000（没有扩容）
 - 扩容 = 申请新内存 + 把所有元素移动（或复制，第 13 课的 `noexcept`）过去 + 释放旧内存。单次扩容是 O(n)，但均摊到每次 `push_back` 是 **O(1)**。
 - 扩容后所有指针、引用、迭代器都失效（第 2 课实测过）。
 
-**`events` 为什么占了很多分配**：一场战斗 912 个事件，`result.events` 从 1 开始翻倍扩容到 1024，一共扩容 11 次。每次扩容都要把所有 `Event`（每个 136 字节）搬一遍。如果能预估事件数，提前 `reserve` 就能省掉这些。项目里 `result.units.reserve(units.size())`（`battle_state.cpp:543`）就是这么做的，因为单位数是已知的。
+**`events` 为什么占了很多分配**：一场战斗 912 个事件，`result.events` 从 1 开始翻倍扩容到 1024，一共扩容 11 次。每次扩容都要把所有 `Event`（每个 136 字节）搬一遍。如果能预估事件数，提前 `reserve` 就能省掉这些。项目里 `result.units.reserve(units.size())`（`battle_state.cpp:579`）就是这么做的，因为单位数是已知的。
 
 其他要点：
 - `shrink_to_fit()` 请求释放多余容量，但标准不保证一定释放。

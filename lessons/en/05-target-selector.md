@@ -163,9 +163,9 @@ sort       : 1000 1026 1024 1028 1022 1020   ← equal elements got shuffled
 stable_sort: 1000 1002 1004 1006 1008 1010   ← the original order is kept
 ```
 
-Worse, MSVC and GCC shuffle them differently. That's why **the last line of every comparator in the project compares `id`**: IDs are globally unique, so any two units can always be ordered and there is exactly one possible result. `acting_order` (`battle_state.cpp:456`) does the same: speed → position → ID.
+Worse, MSVC and GCC shuffle them differently. That's why **the last line of every comparator in the project compares `id`**: IDs are globally unique, so any two units can always be ordered and there is exactly one possible result. `acting_order` (`battle_state.cpp:493`) does the same: speed → position → ID.
 
-Skill sorting uses `std::stable_sort` (`battle_state.cpp:374`) because skills have no unique tie-break field, and a stable sort keeps the original order from the config table. **Either have a unique tie-break field, or use a stable sort.**
+Skill sorting uses `std::stable_sort` (`battle_state.cpp:395`) because skills have no unique tie-break field, and a stable sort keeps the original order from the config table. **Either have a unique tie-break field, or use a stable sort.**
 
 ## 7. Taking the first N
 

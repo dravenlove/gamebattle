@@ -174,9 +174,9 @@ Windows 用 `scripts/build.ps1`（可加 `-WithoutNif`），配置编译器单�
 打开测试和配置编译器，Debug 构建（实测输出节选）：
 
 ```
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::reason' [-Wmissing-field-initializers]
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::events' [-Wmissing-field-initializers]
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::units' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::reason' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::events' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::units' [-Wmissing-field-initializers]
 [ 57%] Built target gamebattle_core
 [ 84%] Built target gamebattle_port
 [100%] Built target gamebattle_tests
@@ -184,7 +184,7 @@ battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::Bat
 100% tests passed, 0 tests failed out of 6
 ```
 
-那三条警告正是第 1 课第 11 节的坑 4：`BattleState` 构造函数（`battle_state.cpp:361`）用指定初始化只写了 `battle_id`、`seed`、`source_battle_id` 三个字段。
+那三条警告正是第 1 课第 11 节的坑 4：`BattleState` 构造函数（`battle_state.cpp:382`）用指定初始化只写了 `battle_id`、`seed`、`source_battle_id` 三个字段。
 
 为什么只警告 `reason`、`events`、`units`，而同样被省略的 `winner`、`rounds` 没有警告？因为 GCC 只对**没有默认成员初始值**的字段发警告：`winner{Winner::draw}`、`rounds{0}` 在 `engine.hpp` 里写了默认值，而 `std::string reason;`、`std::vector<Event> events;` 没写（实测验证过这条规则）。
 

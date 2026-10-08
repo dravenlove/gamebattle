@@ -43,7 +43,7 @@ class EffectSystem {
 };
 ```
 
-**① Why does `RuntimeUnit` copy `config`?** `battle_state.cpp:374` sorts skills by priority, and sorting modifies data, but the request is `const` and can't be touched. So each battle copies it first and sorts only its own copy. It's the same idea as an Erlang process keeping a copy of the data in its own State.
+**① Why does `RuntimeUnit` copy `config`?** `battle_state.cpp:395` sorts skills by priority, and sorting modifies data, but the request is `const` and can't be touched. So each battle copies it first and sorts only its own copy. It's the same idea as an Erlang process keeping a copy of the data in its own State.
 
 **② Why does `BattleState` borrow the request?** Requests are large and copying is wasteful. The precondition for borrowing: **the borrowed request must outlive the `BattleState`**. `return runtime::BattleRunner(request).run();` at `engine.cpp:132` guarantees that.
 
@@ -202,7 +202,7 @@ warning: 'Runner::state_' will be initialized after [-Wreorder]
 effects saw round = 0 (expected 7)
 ```
 
-In `battle_runtime.hpp:155-156`, `state_` must be written before `effects_`. **Don't ignore `-Wall` warnings.**
+In `battle_runtime.hpp:179-180`, `state_` must be written before `effects_`. **Don't ignore `-Wall` warnings.**
 
 ### Pitfall 4: a reference member bound to a temporary
 

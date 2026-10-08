@@ -2,7 +2,7 @@
 
 [中文](../README.md) | **English**
 
-For engineers whose main language is Erlang, who haven't written C++ in a long time, and who are aiming for a **C++ game-server role**. The course uses this repository's battle engine as its textbook and is split into six parts:
+For engineers whose main language is Erlang, who haven't written C++ in a long time, and who are aiming for a **C++ game-server role**. The course uses this repository's battle engine as its textbook and is split into seven parts:
 
 | Part | Lessons | Goal |
 |---|---|---|
@@ -12,6 +12,7 @@ For engineers whose main language is Erlang, who haven't written C++ in a long t
 | 4. Networking and game servers | 19–20 | An epoll TCP battle server; server architecture and common data structures |
 | 5. Performance and production | 21–22 | Real profiling and fuzzing of the engine, with the problems found recorded |
 | 6. Job hunting | 23–24 | Interview question bank; résumé, project pitch, hands-on list and study plan |
+| 7. Extending the engine | 25 | Adding new gameplay (chains) without changing old results |
 
 Output marked "measured" was produced by actually compiling and running the code on a 4-core Linux cloud VM (g++ 13.3 / clang 18, `-std=c++20`). The hands-on code from part 2 onward lives in [`practice/`](../practice/README.en.md); it links against the real engine without modifying the engine's code.
 
@@ -70,6 +71,12 @@ Output marked "measured" was produced by actually compiling and running the code
 |---|---|
 | [23](23-interview-questions.md) | Interview question bank: 129 questions grouped by topic, each linked to its lesson |
 | [24](24-resume-and-pitch.md) | How to write the résumé, three STAR stories, a hands-on list, a 6-week plan |
+
+### Part 7: Extending the engine
+
+| Lesson | Topic | Measured highlights |
+|---|---|---|
+| [25](25-chain-extension.md) | Adding Yu-Gi-Oh-style chains to the auto-battle: response triggers, `negate`, last-in-first-out resolution, three layers of validation | 2000 battles byte-identical before and after; every deliberate breakage caught by the tests |
 
 **Suggested reading order**: lessons 1–2 are the foundation for everything after them, so read them thoroughly first; read lessons 3–11 in order with the source code open. From part 2 onward each lesson can be read on its own, but lessons 21–22 cite a lot of earlier data. Start lesson 24's "hands-on list" early and work on it as you learn.
 

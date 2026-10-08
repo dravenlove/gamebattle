@@ -207,8 +207,8 @@ issue 3 (slow result encoding)        : run encode_bench to compare
 **How it was found**: writing lesson 21's benchmark required converting a request built in C++ to ETF to run the full pipeline. The same request worked when calling `Engine::simulate` directly, but was rejected after going through ETF.
 
 **Root cause**:
-- When `wire.cpp:310` parses an inline buff, it calls `std::make_shared<BuffSpec>(...)` to create a new object **every time it meets one**. If two units both carry the "Envenom" passive, you get two `BuffSpec`s with identical contents at different addresses.
-- The validation at `battle_state.cpp:159-163` records each buff seen as `buff_id → pointer`, and treats the same id mapping to **different pointers** as "conflicting definitions". It uses "different pointers" to stand for "different definitions", and that premise doesn't hold for inline requests.
+- When `wire.cpp:313` parses an inline buff, it calls `std::make_shared<BuffSpec>(...)` to create a new object **every time it meets one**. If two units both carry the "Envenom" passive, you get two `BuffSpec`s with identical contents at different addresses.
+- The validation at `battle_state.cpp:166-170` records each buff seen as `buff_id → pointer`, and treats the same id mapping to **different pointers** as "conflicting definitions". It uses "different pointers" to stand for "different definitions", and that premise doesn't hold for inline requests.
 - When a request is built directly in C++, the two units share the same `shared_ptr`, so it doesn't trigger. For requests sent with config IDs (`skill_ids`), the buffs come from `ConfigStore` and are also the same shared object, so they're unaffected too.
 
 **Impact**: only **inline-format** requests, and only when two units carry a buff with the same id. In the README's example request each buff appears on only one unit, so it wasn't exposed. The recommended production config-ID approach is unaffected. But "three heroes all carrying the same passive" is a perfectly natural thing to write in inline format, and it gets rejected for no apparent reason.

@@ -33,7 +33,7 @@ after reserve(1000), 1000 push_backs leave capacity=1000 (no growth)
 - Growth = allocate new memory + move (or copy, see lesson 13's `noexcept`) every element over + free the old memory. A single growth is O(n), but amortized over every `push_back` it's **O(1)**.
 - After growth, every pointer, reference and iterator is invalid (measured in lesson 2).
 
-**Why `events` accounts for many allocations**: a battle has 912 events, and `result.events` doubles from 1 up to 1024, growing 11 times. Each growth relocates every `Event` (136 bytes each). If the event count can be estimated, a `reserve` up front saves all of that. The project's `result.units.reserve(units.size())` (`battle_state.cpp:543`) does exactly this, because the unit count is known.
+**Why `events` accounts for many allocations**: a battle has 912 events, and `result.events` doubles from 1 up to 1024, growing 11 times. Each growth relocates every `Event` (136 bytes each). If the event count can be estimated, a `reserve` up front saves all of that. The project's `result.units.reserve(units.size())` (`battle_state.cpp:579`) does exactly this, because the unit count is known.
 
 Other points:
 - `shrink_to_fit()` requests that excess capacity be released, but the standard doesn't guarantee it.

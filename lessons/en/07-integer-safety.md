@@ -2,7 +2,7 @@
 
 [中文](../07-integer-safety.md) | **English**
 
-> Files: `src/battle_state.cpp:21-43` (`saturating_multiply`), `:321-336` (`saturating_add`, `scale`)
+> Files: `src/battle_state.cpp:27-49` (`saturating_multiply`), `:321-336` (`saturating_add`, `scale`)
 
 These three small functions are only a few dozen lines, yet they are the foundation of the whole damage calculation.
 
@@ -136,7 +136,7 @@ static_cast<std::int32_t>(std::clamp<std::int64_t>(     //  2147483647   ← sto
     v, INT32_MIN, INT32_MAX))
 ```
 
-A bare `static_cast` keeps only the low 32 bits. Throughout the project the pattern is **`std::clamp` into the target range first, then convert**, for example in `set_attribute_value` (`battle_state.cpp:61`) and when scaling `attack_bp` (`effect_system.cpp:84`). `std::clamp<std::int64_t>` names the type explicitly for the same reason as `std::max`: the argument types must match.
+A bare `static_cast` keeps only the low 32 bits. Throughout the project the pattern is **`std::clamp` into the target range first, then convert**, for example in `set_attribute_value` (`battle_state.cpp:67`) and when scaling `attack_bp` (`effect_system.cpp:197`). `std::clamp<std::int64_t>` names the type explicitly for the same reason as `std::max`: the argument types must match.
 
 ## 7. Mixing signed and unsigned
 
@@ -148,7 +148,7 @@ events.size() >= max_events      // the result is false!
 
 For the comparison, `-1` is converted to the unsigned number `18446744073709551615`. `-Wextra` warns `comparison of integer expressions of different signedness`.
 
-How `emit` writes it (`battle_state.cpp:522`):
+How `emit` writes it (`battle_state.cpp:558`):
 
 ```cpp
 if (result.events.size() >= static_cast<std::size_t>(request.max_events)) {

@@ -9,7 +9,7 @@
 `Effect` 在项目里是这样表示的（第 6 课）：
 
 ```cpp
-enum class EffectKind : std::uint8_t { damage, heal, add_buff, remove_buff, direct_damage };
+enum class EffectKind : std::uint8_t { damage, heal, add_buff, remove_buff, direct_damage, negate };
 struct Effect { EffectKind kind; TargetRule target; ... };
 
 switch (executable->kind) {

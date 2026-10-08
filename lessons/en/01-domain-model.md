@@ -95,7 +95,7 @@ The point that matters most for determinism: `unit_index` in `BattleState` is an
 
 ## 8. The forward declaration `struct BuffSpec;`
 
-`engine.hpp:92` has a lonely line, `struct BuffSpec;`. It solves two problems: **a name must be seen before it is used**, and **a struct's size must be known at compile time**.
+`engine.hpp:104` has a lonely line, `struct BuffSpec;`. It solves two problems: **a name must be seen before it is used**, and **a struct's size must be known at compile time**.
 
 ### First, how the three structs refer to each other
 
@@ -157,7 +157,7 @@ This is in fact what Erlang does by default: large data lives on the heap and th
 
 So every piece of the project that actually reads a `BuffSpec`'s contents lives in a `.cpp`, by which point `BuffSpec` is long since complete.
 
-The order in `engine.hpp:92-120` is the only arrangement that works: one edge in the cycle must be a pointer, and the forward declaration goes before that edge.
+The order in `engine.hpp:104-132` is the only arrangement that works: one edge in the cycle must be a pointer, and the forward declaration goes before that edge.
 
 ```cpp
 struct BuffSpec;                  // ① declare the name first
@@ -204,13 +204,13 @@ g++ -std=c++20 -Wall -Wextra -Wpedantic lessons/lesson1.cpp -o lesson1 && ./less
 1. `std::int32_t max_rounds{50.5};` errors with `narrowing conversion`. This is the benefit of `{}`; with `= 50.5` it would be silently truncated to 50.
 2. `std::cout << Side::attacker;` errors with `no match for 'operator<<'`, because an enum class doesn't convert to an integer automatically.
 3. `P{.y = 1, .x = 2}` errors with `designator order ... does not match declaration order`.
-4. With `-Wextra`, omitting a field **that has no default member initializer** (such as a `std::string`, `std::vector` or `std::optional` without `{}`) in a designated initializer triggers a `missing initializer` warning; omitting a field with a default (such as `int rounds{0};`) doesn't. That is why the exercise code spells out `.forced_first_side = std::nullopt`. The project has one too: when building you'll see `battle_state.cpp:361: warning: missing initializer for member 'BattleResult::reason'`. The omitted field is still initialized normally and the warning is harmless, but you should be able to read it (lesson 11, section 4).
+4. With `-Wextra`, omitting a field **that has no default member initializer** (such as a `std::string`, `std::vector` or `std::optional` without `{}`) in a designated initializer triggers a `missing initializer` warning; omitting a field with a default (such as `int rounds{0};`) doesn't. That is why the exercise code spells out `.forced_first_side = std::nullopt`. The project has one too: when building you'll see `battle_state.cpp:382: warning: missing initializer for member 'BattleResult::reason'`. The omitted field is still initialized normally and the warning is harmless, but you should be able to read it (lesson 11, section 4).
 
 ## Optional exercises
 
-1. Add `enum class Trigger` (9 hook points, copied from `engine.hpp:26`) and `struct Passive`, and give `UnitConfig` a `std::vector<Passive> passives;`.
+1. Add `enum class Trigger` (copied from `engine.hpp:26`, 11 hook points in total) and `struct Passive`, and give `UnitConfig` a `std::vector<Passive> passives;`.
 2. Write `const char* to_string(Side side)` with a `switch`; delete one case on purpose and see what `-Wall` says.
-3. Think about it: why is `hp` an `int64` while `crit_rate_bp` is an `int32`? (Hint: look at the value limits in `battle_state.cpp:241-256`.)
+3. Think about it: why is `hp` an `int64` while `crit_rate_bp` is an `int32`? (Hint: look at the value limits in `battle_state.cpp:253-268`.)
 
 ## Summary
 

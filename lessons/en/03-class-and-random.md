@@ -2,7 +2,7 @@
 
 [中文](../03-class-and-random.md) | **English**
 
-> Files: `src/battle_runtime.hpp:24-32` (`Random`), `src/battle_state.cpp:338-368`
+> Files: `src/battle_runtime.hpp:24-32` (`Random`), `src/battle_state.cpp:359-389`
 
 ## 1. class and struct: one default apart
 
@@ -94,7 +94,7 @@ Random::Random(std::uint64_t seed) : state_(seed) {}
 
 The part after the colon runs before the function body is entered and constructs members directly from the given values. Two kinds of member **can only** be initialized there: **reference members** (which must be bound at birth) and **const members**.
 
-The `BattleState` constructor (`battle_state.cpp:358`):
+The `BattleState` constructor (`battle_state.cpp:379`):
 
 ```cpp
 BattleState::BattleState(const BattleRequest& request_value)
@@ -194,7 +194,7 @@ apply_buff(..., std::make_shared<BuffSpec>());    // shared_ptr<T> → shared_pt
 
 ### One place where you must write explicit construction by hand
 
-`battle_state.cpp:470-474`:
+`battle_state.cpp:506-510`:
 
 ```cpp
 return found == unit_index.end() ? std::nullopt

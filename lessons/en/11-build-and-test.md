@@ -174,9 +174,9 @@ On Windows use `scripts/build.ps1` (optionally with `-WithoutNif`), and `scripts
 A Debug build with tests and the config compiler turned on (measured, output excerpt):
 
 ```
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::reason' [-Wmissing-field-initializers]
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::events' [-Wmissing-field-initializers]
-battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::BattleResult::units' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::reason' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::events' [-Wmissing-field-initializers]
+battle_state.cpp:382:7: warning: missing initializer for member 'gamebattle::BattleResult::units' [-Wmissing-field-initializers]
 [ 57%] Built target gamebattle_core
 [ 84%] Built target gamebattle_port
 [100%] Built target gamebattle_tests
@@ -184,7 +184,7 @@ battle_state.cpp:361:7: warning: missing initializer for member 'gamebattle::Bat
 100% tests passed, 0 tests failed out of 6
 ```
 
-Those three warnings are exactly pitfall 4 from lesson 1, section 11: the `BattleState` constructor (`battle_state.cpp:361`) uses designated initializers for only three fields, `battle_id`, `seed` and `source_battle_id`.
+Those three warnings are exactly pitfall 4 from lesson 1, section 11: the `BattleState` constructor (`battle_state.cpp:382`) uses designated initializers for only three fields, `battle_id`, `seed` and `source_battle_id`.
 
 Why are only `reason`, `events` and `units` warned about, while `winner` and `rounds`, also omitted, aren't? Because GCC warns only about fields **without a default member initializer**: `winner{Winner::draw}` and `rounds{0}` have defaults in `engine.hpp`, while `std::string reason;` and `std::vector<Event> events;` don't (this rule was verified by experiment).
 

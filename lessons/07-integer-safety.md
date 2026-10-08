@@ -2,7 +2,7 @@
 
 **中文** | [English](en/07-integer-safety.md)
 
-> 对应文件：`src/battle_state.cpp:21-43`（`saturating_multiply`）、`:321-336`（`saturating_add`、`scale`）
+> 对应文件：`src/battle_state.cpp:27-49`（`saturating_multiply`）、`:321-336`（`saturating_add`、`scale`）
 
 这三个小函数只有几十行，却是整个伤害计算的地基。
 
@@ -136,7 +136,7 @@ static_cast<std::int32_t>(std::clamp<std::int64_t>(     //  2147483647   ← 停
     v, INT32_MIN, INT32_MAX))
 ```
 
-直接 `static_cast` 只保留低 32 位。项目里都是**先 `std::clamp` 限制到目标范围，再转换**，比如 `set_attribute_value`（`battle_state.cpp:61`）和放大 `attack_bp`（`effect_system.cpp:84`）。`std::clamp<std::int64_t>` 显式指定类型，原因和 `std::max` 一样：参数类型必须相同。
+直接 `static_cast` 只保留低 32 位。项目里都是**先 `std::clamp` 限制到目标范围，再转换**，比如 `set_attribute_value`（`battle_state.cpp:67`）和放大 `attack_bp`（`effect_system.cpp:197`）。`std::clamp<std::int64_t>` 显式指定类型，原因和 `std::max` 一样：参数类型必须相同。
 
 ## 7. 有符号和无符号混用
 
@@ -148,7 +148,7 @@ events.size() >= max_events      // 结果是 false！
 
 比较时 `-1` 被转换成无符号数 `18446744073709551615`。`-Wextra` 会警告 `comparison of integer expressions of different signedness`。
 
-`emit` 里的写法（`battle_state.cpp:522`）：
+`emit` 里的写法（`battle_state.cpp:558`）：
 
 ```cpp
 if (result.events.size() >= static_cast<std::size_t>(request.max_events)) {

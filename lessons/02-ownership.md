@@ -43,7 +43,7 @@ class EffectSystem {
 };
 ```
 
-**① `RuntimeUnit` 为什么复制 `config`？** `battle_state.cpp:374` 会对技能按优先级排序，排序会修改数据，但 request 是 `const`，不能动。所以每场战斗先复制一份，只在自己那份上排序。这和 Erlang 进程在自己的 State 里存一份数据是同一个思路。
+**① `RuntimeUnit` 为什么复制 `config`？** `battle_state.cpp:395` 会对技能按优先级排序，排序会修改数据，但 request 是 `const`，不能动。所以每场战斗先复制一份，只在自己那份上排序。这和 Erlang 进程在自己的 State 里存一份数据是同一个思路。
 
 **② `BattleState` 为什么借用 request？** 请求很大，复制浪费。借用的前提是：**被借的 request 必须比 `BattleState` 活得更久**。`engine.cpp:132` 的 `return runtime::BattleRunner(request).run();` 保证了这一点。
 
@@ -202,7 +202,7 @@ warning: 'Runner::state_' will be initialized after [-Wreorder]
 effects saw round = 0 (expected 7)
 ```
 
-`battle_runtime.hpp:155-156` 里 `state_` 一定写在 `effects_` 前面。**`-Wall` 的警告不要忽略。**
+`battle_runtime.hpp:179-180` 里 `state_` 一定写在 `effects_` 前面。**`-Wall` 的警告不要忽略。**
 
 ### 坑 4：引用成员绑定到临时对象
 

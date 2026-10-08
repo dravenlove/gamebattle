@@ -102,7 +102,7 @@ A non-zero exit code lets CI and release scripts detect the failure directly.
 
 ### 3.2 CSV parsing: a hand-written state machine
 
-`parse_csv` (`config_compiler.cpp:263`) scans character by character, tracking state in two booleans, `quoted` and `quote_closed`, and handles:
+`parse_csv` (`config_compiler.cpp:272`) scans character by character, tracking state in two booleans, `quoted` and `quote_closed`, and handles:
 
 - quoted fields (which may contain commas and newlines);
 - `""` meaning one literal quote;
@@ -141,7 +141,7 @@ C's legacy `atoi("12a")` silently returns 12, and returns 0 on error, so you can
 const std::unordered_map<std::string, std::uint8_t> kEffectKinds{
     {"damage", std::uint8_t{0}}, {"heal", std::uint8_t{1}},
     {"add_buff", std::uint8_t{2}}, {"remove_buff", std::uint8_t{3}},
-    {"direct_damage", std::uint8_t{4}}
+    {"direct_damage", std::uint8_t{4}}, {"negate", std::uint8_t{5}}
 };
 ```
 
@@ -150,10 +150,10 @@ These numbers must match the values of `enum class EffectKind` in `engine.hpp` *
 > **Maintenance note**: the config compiler does **not** include `engine.hpp`; the two sides' numbers are kept in sync by hand. When you add a new `EffectKind` later (a shield, say), you must change at least these places together:
 > 1. the `enum class` in `engine.hpp`;
 > 2. the `kEffectKinds` table in `config_compiler.cpp`;
-> 3. the maximum value 4 in `checked_enum<EffectKind>(reader.u8(), 4, ...)` in `config_store.cpp`;
+> 3. the maximum value in `checked_enum<EffectKind>(reader.u8(), 5, ...)` in `config_store.cpp` (5 since `negate` was added);
 > 4. `parse_effect_kind` in `wire.cpp` (inline requests);
 > 5. the `switch` in `effect_system.cpp` (miss it and you get a `-Wswitch` warning, lesson 6);
-> 6. if an older loader can't read the new file, bump the `.gbcfg` format version.
+> 6. if the file layout changes (new fields, reordered fields), bump the `.gbcfg` format version, or an older loader will read bytes from the wrong positions. Adding a new enum value doesn't require a bump: an older loader's range check (section 4.2) fails with a clear error instead of misreading, and files that don't use the new value stay byte-identical and load in both old and new loaders. Lesson 25 handled `negate` this way.
 
 ### 3.5 Deterministic output: `std::map` and no timestamps
 
@@ -295,7 +295,7 @@ Enum checked_enum(std::uint8_t value, std::uint8_t maximum, const char* field) {
     return static_cast<Enum>(value);
 }
 
-raw.value.kind = checked_enum<EffectKind>(reader.u8(), 4, "effect.kind");
+raw.value.kind = checked_enum<EffectKind>(reader.u8(), 5, "effect.kind");
 ```
 
 C++ lets you `static_cast` **any integer** to an enum, even one with no matching enumerator. `static_cast<EffectKind>(9)` compiles and runs, but the `switch` without a `default` from lesson 6 matches no case, and the effect **silently does nothing**. So numbers read from outside must be range-checked before conversion.
@@ -352,7 +352,7 @@ You can't do this in Erlang: once data is created it can't change, so mutual ref
 
 ### 4.5 Cycle detection: Kahn's topological sort
 
-Lesson 2 explained that if buffs reference each other in a cycle, the `shared_ptr`s can never be freed. The loader uses **Kahn's algorithm** (`config_store.cpp:467-502`):
+Lesson 2 explained that if buffs reference each other in a cycle, the `shared_ptr`s can never be freed. The loader uses **Kahn's algorithm** (`config_store.cpp:494-529`):
 
 ```cpp
 std::map<std::uint32_t, std::uint32_t> indegree;                 // how many edges point at each buff
@@ -420,7 +420,7 @@ load_config(Path)
 
 In C++ this is called the **strong exception guarantee**: an operation either succeeds completely or behaves as if it never happened.
 
-`assign_loadout` (`config_store.cpp:614`) follows the same pattern: look up every skill and passive into temporary vectors first, and only `std::move` them into `unit` once all are found. If any ID doesn't exist, it throws before `unit` is modified, and `unit` stays as it was.
+`assign_loadout` (`config_store.cpp:641`) follows the same pattern: look up every skill and passive into temporary vectors first, and only `std::move` them into `unit` once all are found. If any ID doesn't exist, it throws before `unit` is modified, and `unit` stays as it was.
 
 ### 4.8 Two lookup APIs
 
@@ -437,7 +437,7 @@ const BuffSpec& require_buff(std::uint32_t id) const;         // throws std::out
 ### 4.9 Config entering a battle: copied by value
 
 ```cpp
-unit.skills.push_back(configs->require_skill(id));   // wire.cpp:435
+unit.skills.push_back(configs->require_skill(id));   // wire.cpp:438
 ```
 
 `require_skill` returns a `const Skill&` (a borrow), and `push_back` **copies** a `Skill` into `unit`. Copying a `Skill` copies its `effects`; copying an `Effect` copies the `shared_ptr<const BuffSpec>` inside it, which just adds 1 to the reference count; the `BuffSpec` itself isn't copied.
