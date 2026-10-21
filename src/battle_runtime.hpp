@@ -16,7 +16,7 @@ namespace gamebattle::runtime {
 inline constexpr std::int64_t kBasisPoints = 10000;
 inline constexpr std::size_t kMaxDefinitionDepth = 32;
 inline constexpr std::size_t kTriggerCount =
-    static_cast<std::size_t>(Trigger::round_end) + 1;
+    static_cast<std::size_t>(Trigger::ally_activate) + 1;
 
 Side other(Side side);
 std::int64_t saturating_add(std::int64_t left, std::int64_t right);
@@ -66,6 +66,9 @@ public:
     void mark_stats_dirty(std::size_t unit_index);
     std::uint64_t initiative(Side side, std::int64_t bonus) const;
     std::vector<std::size_t> acting_order(Side side);
+    // Living units of one side, including ones that cannot act, in the same
+    // speed/position/id order as acting_order. Used to pick chain responders.
+    std::vector<std::size_t> response_order(Side side);
     std::optional<std::size_t> find_unit(UnitId id) const;
     bool side_defeated(Side side) const;
     bool finish_if_decided(std::string reason);
@@ -99,6 +102,7 @@ public:
 private:
     void add_formation(const Formation& formation, Side side);
     void apply_initial_conditions();
+    void sort_by_speed(std::vector<std::size_t>& order);
 };
 
 // Target selection is deliberately read-mostly and independent from effect

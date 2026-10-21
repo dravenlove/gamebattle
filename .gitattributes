@@ -8,5 +8,10 @@
 *.json text eol=lf
 *.txt text eol=lf
 CMakeLists.txt text eol=lf
+*.proto text eol=lf
+*.src text eol=lf
+*.sh text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
 
 *.ps1 text eol=crlf

@@ -17,4 +17,6 @@ init([]) ->
         type => worker,
         modules => [gamebattle_port]
     },
-    {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, [PortWorker]}}.
+    %% The optional test gateway (off unless configured, see gamebattle_gateway).
+    Children = [PortWorker | gamebattle_gateway:child_specs()],
+    {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, Children}}.

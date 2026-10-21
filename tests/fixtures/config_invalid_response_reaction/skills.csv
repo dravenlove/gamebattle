@@ -1,0 +1,2 @@
+id,name,chance_bp,priority,effect_ids,notes
+501,big_hit,10000,10,9001,an active skill opens a chain

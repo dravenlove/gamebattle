@@ -1,0 +1,2 @@
+buff_id,sequence,trigger,source,stack_scaling,chance_bp,max_triggers_per_round,effect_ids,notes
+901,1,on_damaged,owner,once,10000,0,9004,反弹伤害没有每回合上限

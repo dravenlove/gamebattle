@@ -10,21 +10,13 @@ option(GAMEBATTLE_BUILD_TESTS "Build the C++ battle-core tests" ON)
 option(GAMEBATTLE_BUILD_NIF "Build the Erlang NIF adapter" OFF)
 option(GAMEBATTLE_BUILD_CONFIG_COMPILER "Build the standalone battle config compiler" OFF)
 
-if(GAMEBATTLE_BUILD_CONFIG_COMPILER)
-    add_executable(gamebattle_config_compiler tools/config_compiler.cpp)
-    target_compile_features(gamebattle_config_compiler PRIVATE cxx_std_20)
-    if(MSVC)
-        target_compile_options(gamebattle_config_compiler PRIVATE /W4 /permissive- /utf-8)
-    else()
-        target_compile_options(gamebattle_config_compiler PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
-endif()
-
 add_library(gamebattle_core STATIC
     src/battle_state.cpp
+    src/config_check.cpp
     src/config_store.cpp
     src/effect_system.cpp
     src/engine.cpp
+    src/report.cpp
     src/target_selector.cpp
     src/term.cpp
     src/wire.cpp
@@ -36,6 +28,18 @@ if(MSVC)
     target_compile_options(gamebattle_core PRIVATE /W4 /permissive- /utf-8)
 else()
     target_compile_options(gamebattle_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(GAMEBATTLE_BUILD_CONFIG_COMPILER)
+    add_executable(gamebattle_config_compiler tools/config_compiler.cpp)
+    # The engine runs the cascade check's stress battles.
+    target_link_libraries(gamebattle_config_compiler PRIVATE gamebattle_core)
+    target_compile_features(gamebattle_config_compiler PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(gamebattle_config_compiler PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(gamebattle_config_compiler PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 endif()
 
 add_executable(gamebattle_port src/port_main.cpp)
@@ -56,6 +60,9 @@ if(GAMEBATTLE_BUILD_TESTS)
     add_executable(gamebattle_tests tests/engine_test.cpp)
     target_link_libraries(gamebattle_tests PRIVATE gamebattle_core)
     add_test(NAME gamebattle_tests COMMAND gamebattle_tests)
+    add_executable(gamebattle_config_check_tests tests/config_check_test.cpp)
+    target_link_libraries(gamebattle_config_check_tests PRIVATE gamebattle_core)
+    add_test(NAME gamebattle_config_check_tests COMMAND gamebattle_config_check_tests)
 
     if(GAMEBATTLE_BUILD_CONFIG_COMPILER)
         set(GAMEBATTLE_TEST_CONFIG_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated-config)
@@ -77,12 +84,33 @@ if(GAMEBATTLE_BUILD_TESTS)
                 config/example/passives.csv
             VERBATIM
         )
-        add_custom_target(gamebattle_test_config DEPENDS ${GAMEBATTLE_TEST_CONFIG})
+        set(GAMEBATTLE_CHAIN_CONFIG ${GAMEBATTLE_TEST_CONFIG_DIR}/chain.gbcfg)
+        set(GAMEBATTLE_CHAIN_FIXTURE ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_chain)
+        add_custom_command(
+            OUTPUT ${GAMEBATTLE_CHAIN_CONFIG}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${GAMEBATTLE_TEST_CONFIG_DIR}
+            COMMAND $<TARGET_FILE:gamebattle_config_compiler>
+                --input-dir ${GAMEBATTLE_CHAIN_FIXTURE}
+                --output ${GAMEBATTLE_CHAIN_CONFIG}
+            DEPENDS
+                gamebattle_config_compiler
+                tools/config_compiler.cpp
+                tests/fixtures/config_chain/buffs.csv
+                tests/fixtures/config_chain/buff_modifiers.csv
+                tests/fixtures/config_chain/buff_reactions.csv
+                tests/fixtures/config_chain/effects.csv
+                tests/fixtures/config_chain/skills.csv
+                tests/fixtures/config_chain/passives.csv
+            VERBATIM
+        )
+        add_custom_target(gamebattle_test_config
+            DEPENDS ${GAMEBATTLE_TEST_CONFIG} ${GAMEBATTLE_CHAIN_CONFIG})
         add_executable(gamebattle_config_tests tests/config_store_test.cpp)
         add_dependencies(gamebattle_config_tests gamebattle_test_config)
         target_link_libraries(gamebattle_config_tests PRIVATE gamebattle_core)
         target_compile_definitions(gamebattle_config_tests PRIVATE
-            GAMEBATTLE_TEST_CONFIG_PATH="${GAMEBATTLE_TEST_CONFIG}")
+            GAMEBATTLE_TEST_CONFIG_PATH="${GAMEBATTLE_TEST_CONFIG}"
+            GAMEBATTLE_CHAIN_CONFIG_PATH="${GAMEBATTLE_CHAIN_CONFIG}")
         add_test(NAME gamebattle_config_tests COMMAND gamebattle_config_tests)
 
         add_executable(gamebattle_config_cycle_loader_test
@@ -107,6 +135,36 @@ if(GAMEBATTLE_BUILD_TESTS)
             gamebattle_config_compiler_invalid_reference
             gamebattle_config_compiler_invalid_buff_cycle
             PROPERTIES WILL_FAIL TRUE)
+        # These must fail for the stated reason, not just fail.
+        add_test(NAME gamebattle_config_compiler_invalid_negate_skill
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_invalid_negate_skill
+                --check-only)
+        set_tests_properties(gamebattle_config_compiler_invalid_negate_skill
+            PROPERTIES PASS_REGULAR_EXPRESSION
+                "skills.csv:2: negate effects are only valid in response passives")
+        add_test(NAME gamebattle_config_compiler_invalid_response_reaction
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_invalid_response_reaction
+                --check-only)
+        set_tests_properties(gamebattle_config_compiler_invalid_response_reaction
+            PROPERTIES PASS_REGULAR_EXPRESSION
+                "buff_reactions.csv:2: buff reactions cannot use a response trigger")
+        # A counterattack and a thorns buff that answer each other without a
+        # per-round limit: refused, and the message names the loop.
+        add_test(NAME gamebattle_config_compiler_runaway_loop
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_runaway_loop
+                --check-only)
+        set_tests_properties(gamebattle_config_compiler_runaway_loop
+            PROPERTIES WILL_FAIL TRUE)
+        add_test(NAME gamebattle_config_compiler_runaway_loop_message
+            COMMAND gamebattle_config_compiler
+                --input-dir ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/config_runaway_loop
+                --check-only --no-stress)
+        set_tests_properties(gamebattle_config_compiler_runaway_loop_message
+            PROPERTIES PASS_REGULAR_EXPRESSION
+                "passive 801 \"[^\"]*\" \\(on_damaged, no limit\\) deals damage, which sets off on_damaged")
     endif()
 endif()
 

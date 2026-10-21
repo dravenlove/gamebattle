@@ -1,0 +1,16 @@
+# The Dockerfile copies only sources; keep build outputs, local binaries and
+# version-control data out of the build context.
+.git
+.idea
+/build
+/build-*
+/cmake-build-*
+/out
+/dist
+/lessons
+/config/generated
+/erlang/_build
+/erlang/ebin
+/erlang/bin
+/erlang/priv
+/erlang/src/battle_client_pb.erl

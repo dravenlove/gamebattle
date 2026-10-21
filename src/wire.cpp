@@ -1,5 +1,7 @@
 #include "gamebattle/wire.hpp"
 
+#include "gamebattle/report.hpp"
+
 #include <filesystem>
 #include <initializer_list>
 #include <limits>
@@ -74,6 +76,8 @@ Trigger parse_trigger(std::string_view value) {
     if (value == "unit_death") return Trigger::unit_death;
     if (value == "after_action") return Trigger::after_action;
     if (value == "round_end") return Trigger::round_end;
+    if (value == "enemy_activate") return Trigger::enemy_activate;
+    if (value == "ally_activate") return Trigger::ally_activate;
     throw term::DecodeError("passive.trigger has an unsupported value");
 }
 
@@ -83,8 +87,9 @@ EffectKind parse_effect_kind(std::string_view value) {
     if (value == "add_buff") return EffectKind::add_buff;
     if (value == "remove_buff") return EffectKind::remove_buff;
     if (value == "direct_damage") return EffectKind::direct_damage;
+    if (value == "negate") return EffectKind::negate;
     throw term::DecodeError(
-        "effect.type must be damage, direct_damage, heal, add_buff, or remove_buff");
+        "effect.type must be damage, direct_damage, heal, add_buff, remove_buff, or negate");
 }
 
 Attribute parse_attribute(std::string_view value) {
@@ -641,6 +646,7 @@ Value encode_result(const BattleResult& result) {
         }));
     }
 
+Value::Object summary_fields(const BattleResult& result) {
     Value::List units;
     units.reserve(result.units.size());
     for (const auto& unit : result.units) {
@@ -653,8 +659,7 @@ Value encode_result(const BattleResult& result) {
             {"alive", Value::atom(unit.alive ? "true" : "false")}
         }));
     }
-
-    return Value::object({
+    return {
         {"battle_id", integer(result.battle_id)},
         {"seed", integer(result.seed)},
         {"source_battle_id", integer(result.source_battle_id)},
@@ -670,7 +675,53 @@ Value encode_result(const BattleResult& result) {
             result.events_truncated ? "true" : "false")},
         {"events", Value::list(std::move(events))},
         {"units", Value::list(std::move(units))}
-    });
+    };
+}
+
+} // namespace
+
+std::optional<report::Detail> parse_report_detail(const Value& request) {
+    const auto* value = term::find(request, "report");
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    const auto text = term::as_string(*value, "report");
+    if (text == "summary") return report::Detail::summary;
+    if (text == "actions") return report::Detail::actions;
+    if (text == "events") return report::Detail::events;
+    throw term::DecodeError("report must be summary, actions, or events");
+}
+
+Value encode_compact_result(const BattleResult& result, report::Detail detail) {
+    auto fields = summary_fields(result);
+    fields.emplace_back("report", Value::binary(report::encode(result, detail)));
+    return Value::object(std::move(fields));
+}
+
+Value encode_result(const BattleResult& result) {
+    Value::List events;
+    events.reserve(result.events.size());
+    for (const auto& event : result.events) {
+        events.push_back(Value::object({
+            {"seq", Value(static_cast<std::int64_t>(event.seq))},
+            {"round", Value(static_cast<std::int64_t>(event.round))},
+            {"phase", Value::atom(event.phase)},
+            {"type", Value::atom(event.type)},
+            {"side", Value::atom(side_name(event.side))},
+            {"actor", integer(event.actor)},
+            {"target", integer(event.target)},
+            {"source_id", Value(static_cast<std::int64_t>(event.source_id))},
+            {"value", Value(event.value)},
+            {"hp_before", Value(event.hp_before)},
+            {"hp_after", Value(event.hp_after)},
+            {"critical", Value::atom(event.critical ? "true" : "false")}
+        }));
+    }
+
+    // Same key order as before compact results existed: events, then units.
+    auto fields = summary_fields(result);
+    fields.insert(fields.end() - 1, {"events", Value::list(std::move(events))});
+    return Value::object(std::move(fields));
 }
 
 std::vector<std::uint8_t> Handler::handle_etf(
@@ -711,9 +762,12 @@ std::vector<std::uint8_t> Handler::handle_etf(
             std::shared_lock lock(config_mutex_);
             configs = configs_;
         }
+        const auto detail = parse_report_detail(decoded);
         const BattleRequest battle = parse_request(decoded, configs.get());
         const BattleResult result = Engine{}.simulate(battle);
-        return term::encode(Value::tuple({Value::atom("ok"), encode_result(result)}));
+        return term::encode(Value::tuple({
+            Value::atom("ok"),
+            detail ? encode_compact_result(result, *detail) : encode_result(result)}));
     } catch (const term::DecodeError& error) {
         return term::encode(error_value("invalid_request", error.what()));
     } catch (const std::invalid_argument& error) {

@@ -1,0 +1,2 @@
+id,name,chance_bp,priority,effect_ids,notes
+501,重击,5000,10,9001,单体伤害

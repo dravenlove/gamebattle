@@ -1,0 +1,13 @@
+## Generated at start-up: ${VAR} and ${VAR:-default} come from the environment.
+
+## The name game nodes call this node by. NODE_NAME_TYPE is name (long names,
+## the host part must contain a dot: an IP or FQDN) or sname (short names); use
+## the same kind as the game nodes, which cannot connect to the other kind.
+-${NODE_NAME_TYPE:-name} ${NODE_NAME:-gamebattle@127.0.0.1}
+
+## Shared secret of the Erlang cluster. Anyone who has it and can reach the
+## ports below can run any code on this node.
+-setcookie ${ERLANG_COOKIE}
+
+## A fixed distribution port, so it can be opened next to epmd's 4369.
+-kernel inet_dist_listen_min ${DIST_PORT:-9100} inet_dist_listen_max ${DIST_PORT:-9100}

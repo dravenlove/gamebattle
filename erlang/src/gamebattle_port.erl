@@ -47,7 +47,13 @@ init(Options) ->
                 {spawn_executable, filename:absname(Executable)},
                 port_options()
             ),
-            {ok, #state{port = Port, executable = Executable, timeout = Timeout}};
+            case load_startup_config(Port, Timeout) of
+                ok ->
+                    {ok, #state{port = Port, executable = Executable, timeout = Timeout}};
+                {error, Reason} ->
+                    close_port_safely(Port),
+                    {stop, Reason}
+            end;
         false ->
             {stop, {port_executable_not_found, Executable}}
     end.
@@ -55,17 +61,14 @@ init(Options) ->
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {reply, term(), #state{}} | {stop, term(), term(), #state{}}.
 handle_call({request, Request}, _From, State = #state{port = Port, timeout = Timeout}) ->
-    true = port_command(Port, term_to_binary(Request)),
-    receive
-        {Port, {data, ResponseBinary}} ->
-            {reply, decode_response(ResponseBinary), State};
-        {Port, {exit_status, Status}} ->
-            {stop, {port_exit, Status}, {error, #{type => port_exit, status => Status}}, State};
-        {'EXIT', Port, Reason} ->
-            {stop, {port_exit, Reason}, {error, #{type => port_exit, reason => Reason}}, State}
-    after Timeout ->
-        close_port_safely(Port),
-        {stop, port_timeout, {error, #{type => timeout, timeout_ms => Timeout}}, State}
+    case exchange(Port, Request, Timeout) of
+        {reply, Response} ->
+            remember_config(Request, Response),
+            {reply, Response, State};
+        {port_exit, Reason, Error} ->
+            {stop, {port_exit, Reason}, {error, Error}, State};
+        timeout ->
+            {stop, port_timeout, {error, #{type => timeout, timeout_ms => Timeout}}, State}
     end;
 handle_call(Request, _From, State) ->
     {reply, {error, #{type => unsupported_call, request => Request}}, State}.
@@ -90,6 +93,60 @@ terminate(_Reason, #state{port = Port}) ->
 -spec code_change(term(), #state{}, term()) -> {ok, #state{}}.
 code_change(_OldVersion, State, _Extra) ->
     {ok, State}.
+
+%% Sends one request to the C++ process and waits for its reply.
+-spec exchange(port(), term(), pos_integer()) ->
+    {reply, term()} | {port_exit, term(), map()} | timeout.
+exchange(Port, Request, Timeout) ->
+    true = port_command(Port, term_to_binary(Request)),
+    receive
+        {Port, {data, ResponseBinary}} ->
+            {reply, decode_response(ResponseBinary)};
+        {Port, {exit_status, Status}} ->
+            {port_exit, Status, #{type => port_exit, status => Status}};
+        {'EXIT', Port, Reason} ->
+            {port_exit, Reason, #{type => port_exit, reason => Reason}}
+    after Timeout ->
+        close_port_safely(Port),
+        timeout
+    end.
+
+%% A new C++ process starts with no config. Load the configured package before
+%% serving requests, so a restarted Port serves the same config as before.
+-spec load_startup_config(port(), pos_integer()) -> ok | {error, term()}.
+load_startup_config(Port, Timeout) ->
+    case config_path() of
+        undefined ->
+            ok;
+        Path ->
+            Request = {load_config, unicode:characters_to_binary(Path)},
+            case exchange(Port, Request, Timeout) of
+                {reply, {ok, _}} -> ok;
+                {reply, Error} -> {error, {config_load_failed, Path, Error}};
+                {port_exit, Reason, _} -> {error, {port_exit, Reason}};
+                timeout -> {error, port_timeout}
+            end
+    end.
+
+%% The application env wins over GAMEBATTLE_CONFIG, so that a package loaded
+%% later with load_config/1 is the one reloaded after a restart.
+-spec config_path() -> file:filename_all() | undefined.
+config_path() ->
+    case application:get_env(gamebattle, config_path) of
+        {ok, Path} -> Path;
+        undefined ->
+            case os:getenv("GAMEBATTLE_CONFIG") of
+                false -> undefined;
+                "" -> undefined;
+                Path -> Path
+            end
+    end.
+
+-spec remember_config(term(), term()) -> ok.
+remember_config({load_config, Path}, {ok, _}) ->
+    application:set_env(gamebattle, config_path, Path);
+remember_config(_Request, _Response) ->
+    ok.
 
 -spec decode_response(binary()) -> term().
 decode_response(Binary) ->

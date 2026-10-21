@@ -1,0 +1,18 @@
+# A standalone battle node. Compile the config first (see README), then:
+#   ERLANG_COOKIE=<secret> docker compose up -d --build
+# Game nodes on the same Docker network, started with -sname and the same
+# cookie, call it as gamebattle@battle.
+services:
+  battle:
+    build: .
+    image: gamebattle:latest
+    hostname: battle
+    init: true
+    restart: unless-stopped
+    environment:
+      NODE_NAME_TYPE: sname
+      NODE_NAME: gamebattle@battle
+      ERLANG_COOKIE: ${ERLANG_COOKIE:?set ERLANG_COOKIE to the cluster's secret cookie}
+      GAMEBATTLE_CONFIG: /etc/gamebattle/battle.gbcfg
+    volumes:
+      - ./config/generated:/etc/gamebattle:ro

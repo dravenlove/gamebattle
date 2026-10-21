@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <unordered_map>
+#include <vector>
 
 namespace gamebattle {
 
@@ -19,6 +20,8 @@ public:
     static constexpr std::uint16_t format_minor = 0;
 
     static ConfigStore load_file(const std::filesystem::path& path);
+    // The whole pack file, header included, as the compiler writes it.
+    static ConfigStore load_bytes(std::span<const std::uint8_t> bytes);
 
     const BuffSpec* find_buff(std::uint32_t id) const noexcept;
     const Effect* find_effect(std::uint32_t id) const noexcept;
@@ -40,6 +43,11 @@ public:
     std::size_t effect_count() const noexcept { return effects_.size(); }
     std::size_t skill_count() const noexcept { return skills_.size(); }
     std::size_t passive_count() const noexcept { return passives_.size(); }
+
+    // Every id in the pack, in ascending order.
+    std::vector<std::uint32_t> buff_ids() const;
+    std::vector<std::uint32_t> skill_ids() const;
+    std::vector<std::uint32_t> passive_ids() const;
 
 private:
     std::unordered_map<std::uint32_t, std::shared_ptr<const BuffSpec>> buffs_;

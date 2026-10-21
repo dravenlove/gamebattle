@@ -57,7 +57,15 @@ CombatEventContext children_of(const CombatEventContext& emitted) {
 
 } // namespace
 
-EffectSystem::EffectSystem(BattleState& state) : state_(state) {}
+EffectSystem::EffectSystem(BattleState& state) : state_(state) {
+    for (const auto& unit : state_.units) {
+        for (const auto trigger : {Trigger::enemy_activate, Trigger::ally_activate}) {
+            if (!unit.passives_by_trigger.at(static_cast<std::size_t>(trigger)).empty()) {
+                responses_possible_ = true;
+            }
+        }
+    }
+}
 
 void EffectSystem::execute_action(std::size_t actor_index) {
     if (actor_index >= state_.units.size() || state_.execution_limit) {

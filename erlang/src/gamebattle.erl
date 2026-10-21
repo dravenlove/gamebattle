@@ -11,7 +11,7 @@
     example_request/0
 ]).
 
--type adapter() :: port | nif.
+-type adapter() :: port | nif | erlang.
 -type result() :: {ok, map()} | {error, map()}.
 
 -spec simulate(map()) -> result().
@@ -22,7 +22,9 @@ simulate(Request) ->
 simulate(port, Request) when is_map(Request) ->
     gamebattle_port:simulate(Request);
 simulate(nif, Request) when is_map(Request) ->
-    gamebattle_nif:simulate(Request).
+    gamebattle_nif:simulate(Request);
+simulate(erlang, Request) when is_map(Request) ->
+    gamebattle_erl:simulate(Request).
 
 -spec load_config(file:filename_all()) -> {ok, map()} | {error, map()}.
 load_config(Path) ->
@@ -32,7 +34,9 @@ load_config(Path) ->
 load_config(port, Path) ->
     gamebattle_port:load_config(Path);
 load_config(nif, Path) ->
-    gamebattle_nif:load_config(unicode:characters_to_binary(Path)).
+    gamebattle_nif:load_config(unicode:characters_to_binary(Path));
+load_config(erlang, Path) ->
+    gamebattle_erl:load_config(Path).
 
 %% Build sparse runtime overrides for the next battle. Formation definitions
 %% remain authoritative for max HP and every other configured attribute.

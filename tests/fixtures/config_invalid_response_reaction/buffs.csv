@@ -1,0 +1,2 @@
+id,name,lifetime,duration,decrement_on,max_stacks,stack_policy,refresh_policy,notes
+802,rally,finite,1,round_end,1,refresh,reset,support buff applied by a chain response
