@@ -1,2 +1,2 @@
-buff_id,sequence,trigger,source,stack_scaling,chance_bp,max_triggers_per_round,effect_ids,notes
-801,1,round_end,owner,once,10000,0,9001,触发后再次添加自身
+buff_id,sequence,priority,trigger,source,stack_scaling,chance_bp,max_triggers_per_round,effect_ids,notes
+801,1,0,round_end,owner,once,10000,0,9001,触发后再次添加自身

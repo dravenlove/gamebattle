@@ -47,6 +47,7 @@ gamebattle::term::Value configured_request_term() {
 }
 
 void test_config_store_and_wire_ids() {
+    static_assert(gamebattle::ConfigStore::format_major == 3);
     const auto store = gamebattle::ConfigStore::load_file(GAMEBATTLE_TEST_CONFIG_PATH);
     assert(store.buff_count() == 2);
     assert(store.effect_count() == 5);
@@ -54,7 +55,10 @@ void test_config_store_and_wire_ids() {
     assert(store.passive_count() == 3);
     assert(store.require_buff(801).lifetime.decrement_on ==
            gamebattle::Trigger::round_end);
+    assert(store.require_buff(801).stacking.key ==
+           gamebattle::StackKeyPolicy::by_buff_and_source);
     assert(store.require_buff(801).reactions.size() == 1);
+    assert(store.require_buff(801).reactions.front().priority == 100);
     assert(store.require_buff(801).reactions.front().stack_scaling ==
            gamebattle::StackScaling::per_stack);
     assert(store.require_buff(801).reactions.front().effects.front().kind ==
@@ -65,6 +69,7 @@ void test_config_store_and_wire_ids() {
     assert(store.require_skill(501).effects.size() == 1);
     assert(store.require_passive(701).effects.front().buff != nullptr);
     assert(store.require_passive(701).effects.front().buff->id == 801);
+    assert(store.require_passive(701).priority == 100);
 
     gamebattle::UnitConfig configured;
     const std::uint32_t skill_ids[] = {501};
